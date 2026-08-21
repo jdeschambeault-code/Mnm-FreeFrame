@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_use_tls: bool = True
 
+    # Ayon (https://ynput.io) connection - used by services/ayon_service.py to
+    # list/browse Ayon projects and folder/task hierarchies. Not required;
+    # the /admin/ayon/* endpoints just 400 if unset.
+    ayon_url: str | None = None
+    ayon_api_key: str | None = None
+
     @model_validator(mode="after")
     def _check_s3_endpoint_consistency(self):
         """Fail loud on `S3_STORAGE=s3` + a real custom (non-AWS) `S3_ENDPOINT`.

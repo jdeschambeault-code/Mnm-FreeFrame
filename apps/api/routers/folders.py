@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.asset import Asset
+from ..models.asset import Asset, AssetVersion, MediaFile
 from ..models.folder import Folder
 from ..models.project import Project, ProjectRole
 from ..models.user import User
@@ -42,6 +43,30 @@ def _get_folder(db: Session, folder_id: uuid.UUID) -> Folder:
 
 
 
+def _folder_zip_basename(db: Session, folder: Folder, sanitize) -> str:
+    """Only a version folder (e.g. "v003") gets the ancestor-chain name
+    (folder_task_version, e.g. "111_Animation_v003") - that pattern only
+    makes sense at the leaf where "version" is a real segment. Downloading
+    any other folder (a task, a shot, a date, ...) zips everything under it
+    recursively, so its own name alone is the meaningful one - dragging in
+    ancestor names there just produces noise (e.g. the project's own name
+    showing up in "z_dummyTest_2026-08-18_111.zip")."""
+    if re.match(r"v\d+$", folder.name, re.IGNORECASE):
+        name_parts = [folder.name]
+        cursor = folder
+        for _ in range(2):
+            if not cursor.parent_id:
+                break
+            cursor = db.query(Folder).filter(Folder.id == cursor.parent_id).first()
+            if not cursor:
+                break
+            name_parts.append(cursor.name)
+        name_parts.reverse()
+    else:
+        name_parts = [folder.name]
+    return "_".join(sanitize(p) for p in name_parts)
+
+
 def _get_descendant_ids(db: Session, folder_id: uuid.UUID) -> list[uuid.UUID]:
     """Get all descendant folder IDs (BFS)."""
     descendants: list[uuid.UUID] = []
@@ -72,6 +97,22 @@ def _get_depth(db: Session, folder_id: Optional[uuid.UUID]) -> int:
     return depth
 
 
+def _asset_ids_in_folder(db: Session, folder_id: uuid.UUID):
+    """Distinct asset ids that belong in this folder: either the asset's own
+    (primary) folder_id - true for every asset, old or new - or any
+    individual version filed here (AssetVersion.folder_id, only populated
+    for versions created after that column existed). The latter is what
+    makes an older date-folder still show the asset it received a version
+    of, even after a newer version (filed elsewhere) became that asset's
+    overall latest - see routers/assets.py list_assets's matching folder_scope
+    logic."""
+    own = db.query(Asset.id).filter(Asset.folder_id == folder_id, Asset.deleted_at.is_(None))
+    via_version = db.query(AssetVersion.asset_id).filter(
+        AssetVersion.folder_id == folder_id, AssetVersion.deleted_at.is_(None)
+    )
+    return {row[0] for row in own.union(via_version).all()}
+
+
 def _compute_item_count(db: Session, folder_id: uuid.UUID) -> int:
     """Count immediate subfolders + assets in a folder."""
     subfolder_count = (
@@ -80,12 +121,7 @@ def _compute_item_count(db: Session, folder_id: uuid.UUID) -> int:
         .scalar()
         or 0
     )
-    asset_count = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.folder_id == folder_id, Asset.deleted_at.is_(None))
-        .scalar()
-        or 0
-    )
+    asset_count = len(_asset_ids_in_folder(db, folder_id))
     return subfolder_count + asset_count
 
 
@@ -222,12 +258,24 @@ def get_folder_tree(
         .all()
     ) if folder_ids else {}
 
-    asset_counts = dict(
-        db.query(Asset.folder_id, func.count(Asset.id))
-        .filter(Asset.folder_id.in_(folder_ids), Asset.deleted_at.is_(None))
-        .group_by(Asset.folder_id)
-        .all()
-    ) if folder_ids else {}
+    # Distinct assets per folder, counting via either the asset's own
+    # (primary) folder_id or any version individually filed there - see
+    # _asset_ids_in_folder / AssetVersion.folder_id on the model. Deduped in
+    # Python per folder since an asset can satisfy both sources for the same
+    # folder (its primary folder and its first version's folder usually
+    # coincide) and must still only count once there.
+    asset_counts: dict[uuid.UUID, int] = {}
+    if folder_ids:
+        own_pairs = db.query(Asset.folder_id, Asset.id).filter(
+            Asset.folder_id.in_(folder_ids), Asset.deleted_at.is_(None)
+        )
+        version_pairs = db.query(AssetVersion.folder_id, AssetVersion.asset_id).filter(
+            AssetVersion.folder_id.in_(folder_ids), AssetVersion.deleted_at.is_(None)
+        )
+        asset_ids_by_folder: dict[uuid.UUID, set] = {}
+        for fid, aid in own_pairs.union(version_pairs).all():
+            asset_ids_by_folder.setdefault(fid, set()).add(aid)
+        asset_counts = {fid: len(ids) for fid, ids in asset_ids_by_folder.items()}
 
     # Build tree in Python
     folder_map: dict[uuid.UUID, FolderTreeNode] = {}
@@ -528,3 +576,188 @@ def restore_folder(
 
     db.commit()
     return {"ok": True}
+
+
+@router.get("/folders/{folder_id}/download")
+def download_folder(
+    folder_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Zips this folder and its subfolders and streams it back for download -
+    see the "..." folder menu in the web UI. Two sources, tried in order:
+
+    1. **The original NAS delivery directory**, if this project is
+       Ayon-linked and the folder's real on-disk path (reconstructed from its
+       FreeFrame Folder ancestry under the project's `clientROOTS` root)
+       actually exists - zips *everything* there, including files the Ayon
+       Client Delivery Watcher deliberately didn't ingest (e.g. the plain
+       movie / reference PNG next to a burn-in variant). Staged in
+       `{clientROOTS}/{project}/temp/<timestamp>/` rather than a local temp
+       dir, so it lives alongside the delivery itself.
+    2. **FreeFrame's own S3 storage** (fallback for non-Ayon-linked folders,
+       or if the NAS path isn't reachable from this machine) - zips each
+       asset's latest version (the original uploaded file, not the
+       transcoded HLS renditions), i.e. only whatever actually made it into
+       FreeFrame. Staged in the OS temp dir.
+
+    Zip filename mirrors the folder's own place in the tree: up to two
+    ancestor folder names plus its own, root-to-leaf
+    (e.g. folder "v003" under .../111/Animation/v003 -> "111_Animation_v003.zip"),
+    matching the shot/task/version structure the Ayon Client Delivery
+    Watcher mirrors into FreeFrame - falls back to fewer segments for
+    shallower folders.
+    """
+    import io
+    import tempfile
+    import zipfile
+    from pathlib import Path
+    from datetime import datetime as dt
+    from starlette.background import BackgroundTask
+    from fastapi.responses import FileResponse
+    from ..services.s3_service import get_s3_client
+    from ..services import ayon_service
+    from ..config import settings
+
+    folder = _get_folder(db, folder_id)
+    member = get_project_member(db, folder.project_id, current_user.id)
+    if not member and not is_public_project(db, folder.project_id) and not current_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    def _sanitize(name: str) -> str:
+        return re.sub(r'[<>:"/\\|?*]', "_", name).strip() or "folder"
+
+    # ── Try the original NAS delivery directory first ───────────────────────
+    project = db.query(Project).filter(Project.id == folder.project_id).first()
+    if project and project.ayon_project_name:
+        try:
+            client_root = ayon_service.get_project_client_delivery_path(project.ayon_project_name)
+        except Exception:
+            client_root = None
+        if client_root:
+            ancestor_names = []
+            cursor = folder
+            while cursor:
+                ancestor_names.append(cursor.name)
+                cursor = db.query(Folder).filter(Folder.id == cursor.parent_id).first() if cursor.parent_id else None
+            ancestor_names.reverse()
+            physical_path = Path(client_root, *ancestor_names)
+            if physical_path.is_dir():
+                zip_base_name = _folder_zip_basename(db, folder, _sanitize)
+                timestamp_dir = dt.now().strftime("%Y%m%d_%H%M%S")
+                tmp_dir = Path(client_root) / "temp" / timestamp_dir
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                zip_path = tmp_dir / f"{zip_base_name}.zip"
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in physical_path.rglob("*"):
+                        if f.is_file():
+                            zf.write(f, arcname=str(f.relative_to(physical_path)))
+
+                def _cleanup_nas():
+                    try:
+                        zip_path.unlink(missing_ok=True)
+                        tmp_dir.rmdir()
+                    except OSError:
+                        pass  # not empty / already gone - the beat sweep catches stragglers
+
+                return FileResponse(
+                    path=zip_path,
+                    filename=zip_path.name,
+                    media_type="application/zip",
+                    background=BackgroundTask(_cleanup_nas),
+                )
+
+    # ── Fallback: whatever actually made it into FreeFrame ──────────────────
+    descendant_ids = _get_descendant_ids(db, folder_id)
+    folder_ids = [folder_id] + descendant_ids
+    assets = db.query(Asset).filter(Asset.folder_id.in_(folder_ids), Asset.deleted_at.is_(None)).all()
+    if not assets:
+        raise HTTPException(status_code=404, detail="This folder has no files to download")
+
+    # Relative path (within the zip) for each folder in the subtree, rooted
+    # at the downloaded folder itself (which maps to "" - its own files sit
+    # at the zip's top level, not nested one level deeper into a folder
+    # named after itself). Every subfolder - including sibling folders that
+    # happen to share a name, e.g. two different "v001"s under different
+    # tasks - gets its own real nested path, so files from different
+    # folders never collide or get silently flattened together.
+    folder_by_id = {folder.id: folder}
+    for f in db.query(Folder).filter(Folder.id.in_(descendant_ids)).all():
+        folder_by_id[f.id] = f
+
+    rel_path_by_folder_id: dict[uuid.UUID, str] = {folder_id: ""}
+
+    def _rel_path(fid: uuid.UUID) -> str:
+        if fid in rel_path_by_folder_id:
+            return rel_path_by_folder_id[fid]
+        f = folder_by_id.get(fid)
+        if not f or not f.parent_id:
+            rel_path_by_folder_id[fid] = _sanitize(f.name) if f else ""
+            return rel_path_by_folder_id[fid]
+        parent_path = _rel_path(f.parent_id)
+        name = _sanitize(f.name)
+        path = f"{parent_path}/{name}" if parent_path else name
+        rel_path_by_folder_id[fid] = path
+        return path
+
+    for fid in folder_by_id:
+        _rel_path(fid)
+
+    asset_ids = [a.id for a in assets]
+    latest_versions = {}  # asset_id -> AssetVersion
+    for v in (
+        db.query(AssetVersion)
+        .filter(AssetVersion.asset_id.in_(asset_ids), AssetVersion.deleted_at.is_(None))
+        .order_by(AssetVersion.version_number.desc())
+        .all()
+    ):
+        latest_versions.setdefault(v.asset_id, v)
+
+    version_ids = [v.id for v in latest_versions.values()]
+    files_by_version: dict[uuid.UUID, list] = {}
+    for f in db.query(MediaFile).filter(MediaFile.version_id.in_(version_ids)).all():
+        files_by_version.setdefault(f.version_id, []).append(f)
+
+    zip_base_name = _folder_zip_basename(db, folder, _sanitize)
+
+    timestamp_dir = dt.now().strftime("%Y%m%d_%H%M%S")
+    tmp_dir = Path(tempfile.gettempdir()) / "freeframe_downloads" / timestamp_dir
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = tmp_dir / f"{zip_base_name}.zip"
+
+    s3 = get_s3_client()
+    used_names: dict[str, set[str]] = {}  # folder path -> filenames already placed there
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for asset in assets:
+            version = latest_versions.get(asset.id)
+            if not version:
+                continue
+            folder_path = rel_path_by_folder_id.get(asset.folder_id, "") if asset.folder_id else ""
+            names_here = used_names.setdefault(folder_path, set())
+            for media_file in files_by_version.get(version.id, []):
+                buf = io.BytesIO()
+                try:
+                    s3.download_fileobj(settings.s3_bucket, media_file.s3_key_raw, buf)
+                except Exception:
+                    continue
+                filename = _sanitize(media_file.original_filename or asset.name)
+                if filename in names_here:
+                    stem, dot, ext = filename.rpartition(".")
+                    filename = f"{stem or filename}_{asset.id}{dot}{ext}"
+                names_here.add(filename)
+                arcname = f"{folder_path}/{filename}" if folder_path else filename
+                zf.writestr(arcname, buf.getvalue())
+
+    def _cleanup():
+        try:
+            zip_path.unlink(missing_ok=True)
+            tmp_dir.rmdir()
+        except OSError:
+            pass  # not empty / already gone - harmless, OS temp dir gets cleaned eventually anyway
+
+    return FileResponse(
+        path=zip_path,
+        filename=zip_path.name,
+        media_type="application/zip",
+        background=BackgroundTask(_cleanup),
+    )

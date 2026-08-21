@@ -17,11 +17,13 @@ import {
   Check,
   X,
   Upload,
+  Link2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ProjectAyonTab } from '@/components/settings/project-ayon-tab'
 import type {
   ProjectBranding,
   WatermarkSettings,
@@ -598,6 +600,7 @@ export default function ProjectSettingsPage() {
             { value: 'branding', label: 'Branding', icon: Palette },
             { value: 'watermark', label: 'Watermark', icon: Droplets },
             { value: 'metadata', label: 'Metadata Fields', icon: List },
+            { value: 'ayon', label: 'Ayon', icon: Link2 },
           ].map(({ value, label, icon: Icon }) => (
             <Tabs.Trigger
               key={value}
@@ -623,6 +626,9 @@ export default function ProjectSettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="metadata">
             <MetadataTab projectId={projectId} />
+          </Tabs.Content>
+          <Tabs.Content value="ayon">
+            <ProjectAyonTab projectId={projectId} />
           </Tabs.Content>
         </div>
       </Tabs.Root>

@@ -16,15 +16,20 @@ export function InstanceSettingsTab() {
   );
 
   const [gb, setGb] = React.useState<string>("");
+  const [staffDomains, setStaffDomains] = React.useState<string>("");
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState("");
 
-  // Depend on storage_limit_bytes only — NOT the whole `data` object, whose volatile
+  // Depend on the primitive fields only — NOT the whole `data` object, whose volatile
   // storage_used_bytes changes on every SWR revalidation and would clobber an in-progress edit.
   React.useEffect(() => {
     if (data) setGb(data.storage_limit_bytes > 0 ? String(bytesToGb(data.storage_limit_bytes)) : "");
   }, [data?.storage_limit_bytes]);
+
+  React.useEffect(() => {
+    if (data) setStaffDomains((data.staff_email_domains ?? []).join(", "));
+  }, [data?.staff_email_domains?.join(",")]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -32,7 +37,14 @@ export function InstanceSettingsTab() {
     setError("");
     try {
       const value = gb.trim() === "" ? 0 : gbToBytes(Number(gb));
-      await api.put("/instance/settings", { storage_limit_bytes: value });
+      const domains = staffDomains
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      await api.put("/instance/settings", {
+        storage_limit_bytes: value,
+        staff_email_domains: domains,
+      });
       mutate("/instance/settings");
       setSaved(true);
     } catch (err: unknown) {
@@ -61,6 +73,22 @@ export function InstanceSettingsTab() {
           placeholder="0 = unlimited"
         />
         <p className="text-xs text-text-tertiary">Leave blank or 0 for unlimited.</p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="staff-domains" className="text-sm font-medium text-text-secondary">
+          Staff email domains
+        </label>
+        <Input
+          id="staff-domains"
+          type="text"
+          value={staffDomains}
+          onChange={(e) => setStaffDomains(e.target.value)}
+          placeholder="mnm.local, methodnmadness.com"
+        />
+        <p className="text-xs text-text-tertiary">
+          Comma-separated. Users logging in with any other email domain are treated as client
+          accounts. (Reserved for future content filtering — not yet enforced anywhere.)
+        </p>
       </div>
       {error && <p className="text-xs text-status-error">{error}</p>}
       {saved && <p className="text-xs text-status-success">Saved.</p>}

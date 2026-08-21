@@ -54,12 +54,90 @@ export interface User {
   invite_token?: string | null;
   preferences: Record<string, unknown>;
   created_at: string;
+  last_login_at: string | null;
   deleted_at: string | null;
 }
 
 export interface InstanceSettings {
   storage_limit_bytes: number;
   storage_used_bytes: number;
+  staff_email_domains: string[];
+  workspace_name: string;
+  ayon_relay_paused: boolean;
+}
+
+export interface EmailStatus {
+  provider: string;
+  configured: boolean;
+  from_address: string;
+  from_name: string;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_use_tls: boolean | null;
+}
+
+export interface UserProjectAccessItem {
+  project_id: string;
+  project_name: string;
+  ayon_project_name: string | null;
+  is_member: boolean;
+}
+
+export interface MyProjectVisibilityItem {
+  project_id: string;
+  project_name: string;
+  ayon_project_name: string | null;
+  hidden: boolean;
+}
+
+export interface AyonProjectSummary {
+  name: string;
+  code: string;
+  active: boolean;
+  linked: boolean;
+  freeframe_project_id: string | null;
+}
+
+export interface AyonConnection {
+  ayon_url: string | null;
+  api_key_masked: string | null;
+  source: "database" | "launcher" | "unset";
+}
+
+export interface ProjectPurgePreview {
+  project_name: string;
+  counts: Record<string, number>;
+  nas_delivery_path: string | null;
+}
+
+export interface ProjectPurgeResult {
+  status: string;
+  counts: Record<string, number>;
+  nas_moved_to: string | null;
+}
+
+export interface AyonTask {
+  id: string;
+  name: string;
+  taskType: string | null;
+  status: string | null;
+  assignees: string[];
+}
+
+export interface AyonHierarchyNode {
+  id: string;
+  name: string;
+  folderType: string | null;
+  path: string | null;
+  physical_path: string | null;
+  tasks: AyonTask[];
+  children: AyonHierarchyNode[];
+}
+
+export interface AyonTreeResponse {
+  ayon_project_name: string;
+  disk_path: string | null;
+  hierarchy: AyonHierarchyNode[];
 }
 
 export interface Team {
@@ -96,6 +174,7 @@ export interface Project {
   storage_bytes?: number;
   member_count?: number;
   role?: string | null;
+  ayon_project_name?: string | null;
 }
 
 export interface ProjectMember {

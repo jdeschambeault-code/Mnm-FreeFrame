@@ -26,6 +26,7 @@ class ProjectResponse(BaseModel):
     storage_bytes: int = 0
     member_count: int = 0
     role: ProjectRole | None = None
+    ayon_project_name: str | None = None
     model_config = {"from_attributes": True}
 
 class ProjectMemberResponse(BaseModel):

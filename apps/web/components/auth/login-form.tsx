@@ -214,11 +214,18 @@ export function LoginForm() {
 
     setLoading(true)
     try {
-      const res = await api.post<AuthTokens>('/auth/login', {
+      const res = await api.post<VerifyCodeResponse>('/auth/login', {
         email: classicEmail,
         password: classicPassword,
       })
       setTokens(res.access_token, res.refresh_token)
+      if (res.needs_password) {
+        // Admin-created accounts (POST /admin/users) are flagged
+        // must_change_password server-side - same forced set-new-password
+        // screen the magic-code first-login path already uses.
+        setStep('password')
+        return
+      }
       await useAuthStore.getState().fetchUser()
       const u = useAuthStore.getState().user
       router.replace('/projects')

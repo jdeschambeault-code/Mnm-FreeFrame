@@ -35,6 +35,7 @@ from ..schemas.comment import (
 )
 from ..services import s3_service
 from ..services import comment_export
+from ..services.event_service import publish_sync
 from ..services.permissions import (
     require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
 )
@@ -390,6 +391,15 @@ def create_comment(
 
     db.commit()
     db.refresh(comment)
+
+    # Real-time fan-out (SSE) - scripts/ayon_relay.py listens on this exact
+    # event/payload shape to relay public comments back to Ayon. This was
+    # previously never published anywhere in the app, so the relay was
+    # listening for an event that could never arrive.
+    publish_sync(str(asset.project_id), "new_comment", {
+        "asset_id": str(asset_id), "comment_id": str(comment.id),
+    })
+
     return _build_comment_response(comment, db, current_user_id=current_user.id)
 
 
@@ -432,6 +442,11 @@ def reply_to_comment(
 
     db.commit()
     db.refresh(reply)
+
+    publish_sync(str(asset.project_id), "new_comment", {
+        "asset_id": str(asset_id), "comment_id": str(reply.id),
+    })
+
     return _build_comment_response(reply, db, current_user_id=current_user.id)
 
 
@@ -461,6 +476,35 @@ def update_comment(
     db.commit()
     db.refresh(comment)
     return _build_comment_response(comment, db, current_user_id=current_user.id)
+
+
+@router.post("/comments/{comment_id}/share-to-ayon", status_code=status.HTTP_202_ACCEPTED)
+def share_comment_to_ayon(
+    comment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Manual "Share to Ayon" ("..." menu, staff-only in the UI). Publishes
+    the same SSE event shape create_comment already does, under a distinct
+    "share_comment" type - scripts/ayon_relay.py's watch_project dispatches
+    it straight to handle_new_comment(force=True), bypassing both the
+    relay's global pause flag and the comment's own visibility check (an
+    explicit manual share should work on internal comments too).
+
+    Fire-and-forget, same as comment creation's own relay trigger: this
+    returns as soon as the event is published, with no confirmation that
+    Ayon actually received it (the daemon does that work asynchronously).
+    """
+    comment = db.query(Comment).filter(Comment.id == comment_id, Comment.deleted_at.is_(None)).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    asset = _get_asset(db, comment.asset_id)
+    require_asset_access(db, asset, current_user)
+
+    publish_sync(str(asset.project_id), "share_comment", {
+        "asset_id": str(comment.asset_id), "comment_id": str(comment.id),
+    })
+    return {"status": "queued"}
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)

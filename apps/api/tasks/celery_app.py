@@ -44,6 +44,12 @@ celery_app.conf.update(
         "apps.api.tasks.transcode_tasks.*": {"queue": "transcoding"},
         "apps.api.tasks.email_tasks.send_magic_code_email": {"queue": "email_high"},
         "apps.api.tasks.email_tasks.send_invite_email": {"queue": "email_high"},
+        # Was missing from this table entirely, so it fell back to
+        # task_default_queue="default" - a queue neither celery worker in
+        # start.js consumes (-Q transcoding / -Q email_high,email_low), so
+        # every Create User credentials email silently sat in Redis forever
+        # and was never sent.
+        "apps.api.tasks.email_tasks.send_credentials_email": {"queue": "email_high"},
         "apps.api.tasks.email_tasks.send_mention_email": {"queue": "email_low"},
         "apps.api.tasks.email_tasks.send_comment_email": {"queue": "email_low"},
         "apps.api.tasks.email_tasks.send_assignment_email": {"queue": "email_low"},
@@ -73,6 +79,10 @@ celery_app.conf.beat_schedule = {
     "sweep-orphan-s3": {
         "task": "sweep_orphan_s3",
         "schedule": crontab(minute=0, hour=4, day_of_week=0),  # weekly, Sunday 04:00 UTC
+    },
+    "cleanup-folder-downloads": {
+        "task": "cleanup_folder_downloads",
+        "schedule": crontab(minute=0, hour="*/6"),  # every 6 hours
     },
 }
 

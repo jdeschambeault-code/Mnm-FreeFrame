@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
-from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.project import Project, ProjectMember, ProjectRole, UserHiddenProject
 from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
@@ -66,14 +66,37 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
     membership_map = {m.project_id: m.role for m in memberships}
     member_project_ids = list(membership_map.keys())
 
-    # Get projects: user's memberships + all public projects
-    projects = db.query(Project).filter(
-        Project.deleted_at.is_(None),
-        or_(
-            Project.id.in_(member_project_ids) if member_project_ids else False,
-            Project.is_public == True,
-        ),
-    ).all()
+    from ..services.permissions import is_staff_user
+
+    if current_user.is_superadmin:
+        # Sees every project regardless of membership - an admin who
+        # activates an Ayon project (Admin -> Ayon Projects) shouldn't have
+        # to separately add themselves as a member to see it.
+        projects = db.query(Project).filter(Project.deleted_at.is_(None)).all()
+    elif is_staff_user(db, current_user):
+        # Staff (email domain on the admin-configured allowlist) see every
+        # project by default too, minus whichever ones they've personally
+        # hidden (see /projects/{id}/hide - "My Ayon Projects" settings
+        # page) - same reasoning as the superadmin case, but staff can also
+        # opt out per-project for themselves without affecting anyone else.
+        hidden_ids = {
+            h.project_id for h in db.query(UserHiddenProject.project_id).filter(
+                UserHiddenProject.user_id == current_user.id
+            ).all()
+        }
+        projects = [
+            p for p in db.query(Project).filter(Project.deleted_at.is_(None)).all()
+            if p.id not in hidden_ids
+        ]
+    else:
+        # Get projects: user's memberships + all public projects
+        projects = db.query(Project).filter(
+            Project.deleted_at.is_(None),
+            or_(
+                Project.id.in_(member_project_ids) if member_project_ids else False,
+                Project.is_public == True,
+            ),
+        ).all()
 
     all_project_ids = [p.id for p in projects]
     if not all_project_ids:
@@ -131,7 +154,7 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
         ProjectMember.user_id == current_user.id,
         ProjectMember.deleted_at.is_(None),
     ).first()
-    if not member and not project.is_public:
+    if not member and not project.is_public and not current_user.is_superadmin:
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project)
@@ -300,3 +323,99 @@ def remove_project_poster(
             pass
         project.poster_s3_key = None
         db.commit()
+
+
+@router.get("/{project_id}/ayon-tree")
+def get_project_ayon_tree(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Live Ayon folder/task hierarchy for the Ayon project this FreeFrame project is linked to.
+
+    Fetched fresh from Ayon on every call - nothing is cached or persisted (see
+    services/ayon_service.py), so this is always exactly what Ayon currently has.
+    """
+    from ..services import ayon_service
+    from ..services.ayon_service import AyonNotConfigured
+
+    project = _get_project(db, project_id)
+    member = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not member and not project.is_public and not current_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Not a project member")
+
+    if not project.ayon_project_name:
+        raise HTTPException(status_code=400, detail="This project isn't linked to an Ayon project")
+
+    try:
+        hierarchy = ayon_service.get_folders_and_tasks(project.ayon_project_name)
+        disk_path = ayon_service.get_project_disk_path(project.ayon_project_name)
+    except AyonNotConfigured as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "ayon_project_name": project.ayon_project_name,
+        "disk_path": disk_path,
+        "hierarchy": hierarchy,
+    }
+
+
+# ── Per-user project visibility (staff "My Ayon Projects" self-service) ─────────
+# Staff (services.permissions.is_staff_user) see every project by default
+# (see list_projects above) - these let a staff member personally hide ones
+# they don't want cluttering their own list, without touching the project
+# itself or anyone else's view. No-ops (but harmless) for non-staff users,
+# since they never see anything by default to hide in the first place.
+
+@router.get("/me/hidden", response_model=list[uuid.UUID])
+def list_my_hidden_projects(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rows = db.query(UserHiddenProject.project_id).filter(UserHiddenProject.user_id == current_user.id).all()
+    return [r.project_id for r in rows]
+
+
+@router.get("/me/all")
+def list_all_projects_for_visibility_toggle(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Every non-deleted project + whether the current user has personally
+    hidden it - for the "My Ayon Projects" settings page. Unlike the plain
+    project list (which already filters hidden ones out), this needs to
+    show hidden projects too, so there's something to un-hide. Staff/admin
+    only - non-staff users have no "sees everything, can hide some" concept
+    to manage here (see is_staff_user)."""
+    from ..services.permissions import is_staff_user
+    if not (current_user.is_superadmin or is_staff_user(db, current_user)):
+        raise HTTPException(status_code=403, detail="Only staff accounts have projects to manage visibility for")
+
+    hidden_ids = {
+        h.project_id for h in db.query(UserHiddenProject.project_id).filter(
+            UserHiddenProject.user_id == current_user.id
+        ).all()
+    }
+    projects = db.query(Project).filter(Project.deleted_at.is_(None)).order_by(Project.name).all()
+    return [
+        {
+            "project_id": p.id,
+            "project_name": p.name,
+            "ayon_project_name": p.ayon_project_name,
+            "hidden": p.id in hidden_ids,
+        }
+        for p in projects
+    ]
+
+
+@router.post("/{project_id}/hide", status_code=status.HTTP_204_NO_CONTENT)
+def hide_project_for_me(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _get_project(db, project_id)
+    existing = db.query(UserHiddenProject).filter(
+        UserHiddenProject.user_id == current_user.id, UserHiddenProject.project_id == project_id
+    ).first()
+    if not existing:
+        db.add(UserHiddenProject(user_id=current_user.id, project_id=project_id))
+        db.commit()
+
+
+@router.post("/{project_id}/unhide", status_code=status.HTTP_204_NO_CONTENT)
+def unhide_project_for_me(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db.query(UserHiddenProject).filter(
+        UserHiddenProject.user_id == current_user.id, UserHiddenProject.project_id == project_id
+    ).delete(synchronize_session=False)
+    db.commit()

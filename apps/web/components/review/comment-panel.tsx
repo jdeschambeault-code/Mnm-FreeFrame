@@ -27,10 +27,15 @@ import {
   Send,
   Lock,
   Download,
+  UploadCloud,
 } from "lucide-react";
+import useSWR from "swr";
 import { cn, formatTime, formatRelativeTime } from "@/lib/utils";
+import { api } from "@/lib/api";
 import { useReviewStore } from "@/stores/review-store";
+import { useAuthStore } from "@/stores/auth-store";
 import type { CommentWithReplies } from "@/hooks/use-comments";
+import type { InstanceSettings } from "@/types";
 import {
   exportComments,
   FpsRequiredError,
@@ -164,21 +169,39 @@ function Dropdown({
 
 function CommentMenu({
   isOwn,
+  isStaff,
   commentId,
   assetId,
   onEdit,
   onDelete,
 }: {
   isOwn: boolean;
+  isStaff?: boolean;
   commentId: string;
   assetId?: string;
   onEdit: () => void;
   onDelete: (commentId: string) => Promise<void>;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [sharing, setSharing] = React.useState(false);
+  const [shared, setShared] = React.useState(false);
 
-  // Only show menu for own comments — others only get emoji reactions
-  if (!isOwn) return null;
+  // Own comments get the full menu; staff additionally get "Share to Ayon"
+  // on any comment (not just their own) - everyone else only gets emoji
+  // reactions, no menu at all.
+  if (!isOwn && !isStaff) return null;
+
+  const handleShareToAyon = async () => {
+    setSharing(true);
+    try {
+      await api.post(`/comments/${commentId}/share-to-ayon`, {});
+      setShared(true);
+      setTimeout(() => setShared(false), 2000);
+    } finally {
+      setSharing(false);
+      setOpen(false);
+    }
+  };
 
   return (
     <div className="relative">
@@ -194,13 +217,15 @@ function CommentMenu({
         align="right"
         className="w-44"
       >
-        <button
-          className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-tertiary transition-colors"
-          onClick={() => { onEdit(); setOpen(false) }}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          Edit
-        </button>
+        {isOwn && (
+          <button
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-tertiary transition-colors"
+            onClick={() => { onEdit(); setOpen(false) }}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </button>
+        )}
         <button
           className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-tertiary transition-colors"
           onClick={() => {
@@ -218,16 +243,28 @@ function CommentMenu({
           <Link2 className="h-3.5 w-3.5" />
           Copy Link
         </button>
-        <button
-          className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-red-400 hover:bg-bg-tertiary transition-colors"
-          onClick={() => {
-            onDelete(commentId);
-            setOpen(false);
-          }}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </button>
+        {isStaff && (
+          <button
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-tertiary transition-colors disabled:opacity-50"
+            onClick={handleShareToAyon}
+            disabled={sharing}
+          >
+            <UploadCloud className="h-3.5 w-3.5" />
+            {shared ? "Queued for Ayon" : "Share to Ayon"}
+          </button>
+        )}
+        {isOwn && (
+          <button
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-red-400 hover:bg-bg-tertiary transition-colors"
+            onClick={() => {
+              onDelete(commentId);
+              setOpen(false);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        )}
       </Dropdown>
     </div>
   );
@@ -359,6 +396,7 @@ interface CommentItemProps {
   commentNumber?: number;
   depth?: number;
   currentUserId?: string;
+  isStaff?: boolean;
   replyingTo?: string | null;
   isFocused?: boolean;
   onResolve: (commentId: string) => Promise<void>;
@@ -377,6 +415,7 @@ function CommentItem({
   commentNumber,
   depth = 0,
   currentUserId,
+  isStaff,
   replyingTo,
   isFocused,
   onResolve,
@@ -658,6 +697,7 @@ function CommentItem({
               <div className="opacity-0 group-hover/comment:opacity-100 transition-opacity">
                 <CommentMenu
                   isOwn={isOwn}
+                  isStaff={isStaff}
                   commentId={comment.id}
                   assetId={comment.asset_id}
                   onEdit={() => { setEditing(true); setEditBody(comment.body); }}
@@ -722,6 +762,7 @@ function CommentItem({
                   comment={reply}
                   depth={depth + 1}
                   currentUserId={currentUserId}
+                  isStaff={isStaff}
                   replyingTo={replyingTo}
                   onResolve={onResolve}
                   onDelete={onDelete}
@@ -787,6 +828,22 @@ export function CommentPanel({
   const setActiveAnnotation = useReviewStore((s) => s.setActiveAnnotation);
   const currentAsset = useReviewStore((s) => s.currentAsset);
   const currentVersion = useReviewStore((s) => s.currentVersion);
+
+  // Staff (mnm.local/methodnmadness.com-domain) users get the "Share to
+  // Ayon" menu item on every comment, not just their own - see CommentMenu.
+  // Same SWR key the sidebar already keeps warm for workspace_name/relay
+  // status, so this is a cache hit in practice, not a new request.
+  const { user } = useAuthStore();
+  const { data: instanceSettings } = useSWR<InstanceSettings>(
+    "/instance/settings",
+    () => api.get<InstanceSettings>("/instance/settings"),
+  );
+  const isStaff = !!(
+    user?.email &&
+    (instanceSettings?.staff_email_domains ?? []).includes(
+      user.email.split("@")[1]?.toLowerCase() ?? "",
+    )
+  );
 
   // Toolbar state
   const [visibility, setVisibility] = React.useState<CommentVisibility>("all");
@@ -1294,6 +1351,7 @@ export function CommentPanel({
                 comment={comment}
                 commentNumber={index + 1}
                 currentUserId={currentUserId}
+                isStaff={isStaff}
                 replyingTo={replyingTo}
                 isFocused={focusedCommentId === comment.id}
                 onResolve={onResolve}

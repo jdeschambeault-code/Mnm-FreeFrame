@@ -1,6 +1,7 @@
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import make_msgid, formatdate
 from typing import Optional
 import boto3
 from botocore.exceptions import ClientError
@@ -46,21 +47,26 @@ class EmailService:
         subject: str,
         html_body: str,
         text_body: Optional[str] = None,
+        cc_emails: Optional[list[str]] = None,
     ) -> bool:
         """Send email via AWS SES."""
         if not settings.aws_mail_access_key_id or not settings.aws_mail_secret_access_key:
             raise ValueError("AWS SES credentials not configured")
-        
+
         ses = self._get_ses_client()
-        
+
         body = {"Html": {"Charset": "UTF-8", "Data": html_body}}
         if text_body:
             body["Text"] = {"Charset": "UTF-8", "Data": text_body}
-        
+
+        destination = {"ToAddresses": [to_email]}
+        if cc_emails:
+            destination["CcAddresses"] = cc_emails
+
         try:
             ses.send_email(
                 Source=f"{self.from_name} <{self.from_address}>",
-                Destination={"ToAddresses": [to_email]},
+                Destination=destination,
                 Message={
                     "Subject": {"Charset": "UTF-8", "Data": subject},
                     "Body": body,
@@ -70,67 +76,78 @@ class EmailService:
         except ClientError as e:
             print(f"SES error: {e.response['Error']['Message']}")
             return False
-    
+
     def _send_via_smtp(
         self,
         to_email: str,
         subject: str,
         html_body: str,
         text_body: Optional[str] = None,
+        cc_emails: Optional[list[str]] = None,
     ) -> bool:
         """Send email via SMTP server."""
         if not settings.smtp_host:
             raise ValueError("SMTP host not configured")
-        
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = f"{self.from_name} <{self.from_address}>"
         msg["To"] = to_email
-        
+        if cc_emails:
+            msg["Cc"] = ", ".join(cc_emails)
+        # RFC 5322 requires Message-ID; some receivers (e.g. Gmail/Google
+        # Workspace) hard-reject anything missing one ("550-5.7.1 Messages
+        # missing a valid Message-ID header are not accepted") rather than
+        # just flagging it as spam, so this isn't optional.
+        msg["Message-ID"] = make_msgid(domain=self.from_address.split("@")[-1])
+        msg["Date"] = formatdate(localtime=True)
+
         if text_body:
             msg.attach(MIMEText(text_body, "plain"))
         msg.attach(MIMEText(html_body, "html"))
-        
+
         try:
             if settings.smtp_use_tls:
                 server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)
                 server.starttls()
             else:
                 server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port)
-            
+
             if settings.smtp_user and settings.smtp_password:
                 server.login(settings.smtp_user, settings.smtp_password)
-            
-            server.sendmail(self.from_address, [to_email], msg.as_string())
+
+            server.sendmail(self.from_address, [to_email, *(cc_emails or [])], msg.as_string())
             server.quit()
             return True
         except Exception as e:
             print(f"SMTP error: {e}")
             return False
-    
+
     def send_email(
         self,
         to_email: str,
         subject: str,
         html_body: str,
         text_body: Optional[str] = None,
+        cc_emails: Optional[list[str]] = None,
     ) -> bool:
         """
         Send email using configured provider (SES or SMTP).
-        
+
         Args:
             to_email: Recipient email address
             subject: Email subject
             html_body: HTML content of the email
             text_body: Optional plain text fallback
-            
+            cc_emails: Optional list of CC recipients
+
         Returns:
             True if sent successfully, False otherwise
         """
         if self.provider == "ses":
-            return self._send_via_ses(to_email, subject, html_body, text_body)
+            return self._send_via_ses(to_email, subject, html_body, text_body, cc_emails)
         elif self.provider == "smtp":
-            return self._send_via_smtp(to_email, subject, html_body, text_body)
+            return self._send_via_smtp(to_email, subject, html_body, text_body, cc_emails)
         else:
             raise ValueError(f"Unknown mail provider: {self.provider}")
     

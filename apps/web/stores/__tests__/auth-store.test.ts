@@ -25,6 +25,7 @@ const mockUser: User = {
   email_verified: true,
   preferences: {},
   created_at: '2024-01-01T00:00:00Z',
+  last_login_at: null,
   deleted_at: null,
 }
 

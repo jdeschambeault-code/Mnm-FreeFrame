@@ -1,12 +1,15 @@
 'use client'
 
 import * as React from 'react'
+import useSWR, { mutate } from 'swr'
 import { Palette, Upload, X, Check, RotateCcw, Moon, Sun } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { useBrandingStore } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { api } from '@/lib/api'
+import type { InstanceSettings } from '@/types'
 
 function LogoUploadSlot({
   label,
@@ -87,20 +90,32 @@ function LogoUploadSlot({
 
 export default function BrandingPage() {
   const { user } = useAuthStore()
-  const { orgName, orgLogoDark, orgLogoLight, setOrgName, setOrgLogoDark, setOrgLogoLight, resetAll } = useBrandingStore()
+  const { orgLogoDark, orgLogoLight, setOrgLogoDark, setOrgLogoLight, resetAll } = useBrandingStore()
   const { theme } = useThemeStore()
+  const { data: instance } = useSWR<InstanceSettings>(
+    '/instance/settings',
+    () => api.get<InstanceSettings>('/instance/settings'),
+  )
+  const orgName = instance?.workspace_name || 'FreeFrame'
 
   const [nameValue, setNameValue] = React.useState(orgName)
+  const [nameSaving, setNameSaving] = React.useState(false)
   const [nameSaved, setNameSaved] = React.useState(false)
 
   React.useEffect(() => { setNameValue(orgName) }, [orgName])
 
-  function handleSaveName() {
+  async function handleSaveName() {
     const trimmed = nameValue.trim()
     if (!trimmed) return
-    setOrgName(trimmed)
-    setNameSaved(true)
-    setTimeout(() => setNameSaved(false), 2000)
+    setNameSaving(true)
+    try {
+      await api.put('/instance/settings', { workspace_name: trimmed })
+      mutate('/instance/settings')
+      setNameSaved(true)
+      setTimeout(() => setNameSaved(false), 2000)
+    } finally {
+      setNameSaving(false)
+    }
   }
 
   const isAdmin = user?.is_superadmin
@@ -137,6 +152,7 @@ export default function BrandingPage() {
               <Button
                 size="sm"
                 onClick={handleSaveName}
+                loading={nameSaving}
                 disabled={!nameValue.trim() || nameValue.trim() === orgName}
               >
                 {nameSaved ? <Check className="h-3.5 w-3.5" /> : 'Save'}
@@ -218,7 +234,12 @@ export default function BrandingPage() {
             variant="ghost"
             size="sm"
             className="text-status-error hover:text-status-error hover:bg-status-error/10 gap-1.5"
-            onClick={() => { resetAll(); setNameValue('FreeFrame') }}
+            onClick={async () => {
+              resetAll()
+              setNameValue('FreeFrame')
+              await api.put('/instance/settings', { workspace_name: 'FreeFrame' })
+              mutate('/instance/settings')
+            }}
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Reset to defaults

@@ -13,6 +13,10 @@ import {
   Users,
   Share2,
   Globe,
+  FolderPlus,
+  Link2,
+  ChevronLeft,
+  Check,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -22,7 +26,88 @@ import { ProjectCard } from "@/components/projects/project-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
-import type { Project, ProjectType } from "@/types";
+import type { Project, ProjectType, AyonProjectSummary } from "@/types";
+
+type NewProjectStep = "choice" | "create" | "ayon";
+
+/** Browse + activate an Ayon project straight from New Project - open to any
+ * staff member (see require_staff_or_admin on the backend), not just admins,
+ * since this is meant for day-to-day project setup (e.g. Armin), not just
+ * the full Settings > Admin > Ayon Projects management view. */
+function AyonProjectPicker({ onActivated }: { onActivated: (project: Project) => void }) {
+  const { data, error, isLoading } = useSWR<AyonProjectSummary[]>(
+    "/admin/ayon/projects",
+    () => api.get<AyonProjectSummary[]>("/admin/ayon/projects"),
+  );
+  const [activating, setActivating] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState("");
+
+  const handleActivate = async (name: string) => {
+    setActivating(name);
+    setActionError("");
+    try {
+      const project = await api.post<Project>(`/admin/ayon/projects/${encodeURIComponent(name)}/activate`, {});
+      onActivated(project);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : `Failed to activate ${name}`);
+    } finally {
+      setActivating(null);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="mt-4 space-y-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="h-11 animate-pulse rounded-lg bg-bg-tertiary" />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="mt-4 text-sm text-status-error">
+        {error instanceof Error ? error.message : "Couldn't reach Ayon"}
+      </p>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return <p className="mt-4 text-sm text-text-tertiary">No Ayon projects found.</p>;
+  }
+
+  return (
+    <div className="mt-4 space-y-2">
+      {actionError && <p className="text-sm text-status-error">{actionError}</p>}
+      <div className="max-h-72 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+        {data.map((p) => (
+          <div key={p.name} className="flex items-center justify-between gap-3 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-primary truncate">{p.name}</p>
+              <p className="text-xs text-text-tertiary">{p.code}</p>
+            </div>
+            {p.linked && p.freeframe_project_id ? (
+              <span className="inline-flex items-center gap-1 shrink-0 text-xs text-text-tertiary">
+                <Check className="h-3.5 w-3.5" /> Linked
+              </span>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={activating === p.name}
+                onClick={() => handleActivate(p.name)}
+                className="shrink-0"
+              >
+                Activate
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 type ViewMode = "grid" | "list";
 
@@ -210,6 +295,7 @@ export default function ProjectsPage() {
   const { user } = useAuthStore();
   const [viewMode, setViewMode] = React.useState<ViewMode>("grid");
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [dialogStep, setDialogStep] = React.useState<NewProjectStep>("choice");
   const [isCreating, setIsCreating] = React.useState(false);
   const [formError, setFormError] = React.useState("");
 
@@ -320,7 +406,10 @@ export default function ProjectsPage() {
             open={dialogOpen}
             onOpenChange={(open) => {
               setDialogOpen(open);
-              if (!open) resetForm();
+              if (!open) {
+                resetForm();
+                setDialogStep("choice");
+              }
             }}
           >
             <Dialog.Trigger asChild>
@@ -337,54 +426,128 @@ export default function ProjectsPage() {
                   <X className="h-4 w-4" />
                 </Dialog.Close>
 
-                <Dialog.Title className="text-base font-semibold text-text-primary">
-                  New Project
-                </Dialog.Title>
-                <Dialog.Description className="mt-1 text-sm text-text-secondary">
-                  Create a new project to organize your assets.
-                </Dialog.Description>
+                {dialogStep === "choice" ? (
+                  <>
+                    <Dialog.Title className="text-base font-semibold text-text-primary">
+                      New Project
+                    </Dialog.Title>
+                    <Dialog.Description className="mt-1 text-sm text-text-secondary">
+                      Start a plain FreeFrame project, or link one from Ayon.
+                    </Dialog.Description>
 
-                <form onSubmit={handleCreate} className="mt-5 space-y-4">
-                  <Input
-                    label="Project name"
-                    placeholder="e.g. Brand Campaign 2025"
-                    value={form.name}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, name: e.target.value }))
-                    }
-                    required
-                  />
+                    <div className="mt-5 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setDialogStep("create")}
+                        className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:border-accent/40 hover:bg-bg-hover transition-colors"
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
+                          <FolderPlus className="h-4.5 w-4.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-text-primary">Create a FreeFrame project</p>
+                          <p className="text-xs text-text-tertiary">A plain project, not linked to Ayon.</p>
+                        </div>
+                      </button>
 
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-text-secondary">
-                      Description
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="Optional description..."
-                      value={form.description}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, description: e.target.value }))
-                      }
-                      className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus"
+                      <button
+                        type="button"
+                        onClick={() => setDialogStep("ayon")}
+                        className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:border-accent/40 hover:bg-bg-hover transition-colors"
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
+                          <Link2 className="h-4.5 w-4.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-text-primary">Show Ayon Project</p>
+                          <p className="text-xs text-text-tertiary">Browse and activate an Ayon project.</p>
+                        </div>
+                      </button>
+                    </div>
+                  </>
+                ) : dialogStep === "ayon" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setDialogStep("choice")}
+                      className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Back
+                    </button>
+                    <Dialog.Title className="mt-2 text-base font-semibold text-text-primary">
+                      Ayon Projects
+                    </Dialog.Title>
+                    <Dialog.Description className="mt-1 text-sm text-text-secondary">
+                      Live from your Ayon server. Activate one to create a matching FreeFrame project.
+                    </Dialog.Description>
+                    <AyonProjectPicker
+                      onActivated={(project) => {
+                        setDialogOpen(false);
+                        setDialogStep("choice");
+                        mutate();
+                        router.push(`/projects/${project.id}`);
+                      }}
                     />
-                  </div>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setDialogStep("choice")}
+                      className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Back
+                    </button>
+                    <Dialog.Title className="mt-2 text-base font-semibold text-text-primary">
+                      New Project
+                    </Dialog.Title>
+                    <Dialog.Description className="mt-1 text-sm text-text-secondary">
+                      Create a new project to organize your assets.
+                    </Dialog.Description>
 
-                  {formError && (
-                    <p className="text-sm text-status-error">{formError}</p>
-                  )}
+                    <form onSubmit={handleCreate} className="mt-5 space-y-4">
+                      <Input
+                        label="Project name"
+                        placeholder="e.g. Brand Campaign 2025"
+                        value={form.name}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, name: e.target.value }))
+                        }
+                        required
+                      />
 
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Dialog.Close asChild>
-                      <Button type="button" variant="secondary" size="sm">
-                        Cancel
-                      </Button>
-                    </Dialog.Close>
-                    <Button type="submit" size="sm" loading={isCreating}>
-                      Create project
-                    </Button>
-                  </div>
-                </form>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-sm font-medium text-text-secondary">
+                          Description
+                        </label>
+                        <textarea
+                          rows={2}
+                          placeholder="Optional description..."
+                          value={form.description}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, description: e.target.value }))
+                          }
+                          className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus"
+                        />
+                      </div>
+
+                      {formError && (
+                        <p className="text-sm text-status-error">{formError}</p>
+                      )}
+
+                      <div className="flex justify-end gap-2 pt-2">
+                        <Dialog.Close asChild>
+                          <Button type="button" variant="secondary" size="sm">
+                            Cancel
+                          </Button>
+                        </Dialog.Close>
+                        <Button type="submit" size="sm" loading={isCreating}>
+                          Create project
+                        </Button>
+                      </div>
+                    </form>
+                  </>
+                )}
               </Dialog.Content>
             </Dialog.Portal>
           </Dialog.Root>

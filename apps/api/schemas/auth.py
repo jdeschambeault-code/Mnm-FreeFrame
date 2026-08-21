@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, field_validator, Field
 import uuid
+from datetime import datetime
 from ..models.user import UserStatus
 
 class LoginRequest(BaseModel):
@@ -24,6 +25,12 @@ class UserResponse(BaseModel):
     email_verified: bool = False
     is_superadmin: bool = False
     preferences: dict = {}
+    created_at: datetime | None = None
+    # Set on every successful login (see routers/auth.py) - NULL until the
+    # account's first login. Was missing from this schema entirely before,
+    # which is why Settings > Admin > Users' "Joined" column (created_at)
+    # showed empty for every user despite the DB column always being set.
+    last_login_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -46,6 +53,9 @@ class AdminUserResponse(UserResponse):
 class InviteRequest(BaseModel):
     email: EmailStr
     name: str
+    # Admin-authored, sent as-is (token-substituted, not re-templated) - see
+    # tasks/email_tasks.py send_invite_email.
+    custom_message: str | None = None
 
 # Magic code flow
 class SendMagicCodeRequest(BaseModel):

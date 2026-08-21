@@ -2,9 +2,10 @@
 
 import React, { useCallback, useState } from 'react'
 import useSWR from 'swr'
-import { Folder, Film, Music, Image as ImageIcon, Images, MoreHorizontal, Pencil, Trash, Share2 } from 'lucide-react'
+import { Folder, Film, Music, Image as ImageIcon, Images, MoreHorizontal, Pencil, Trash, Share2, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { useDownloadStore } from '@/stores/download-store'
 import { NameDialog } from './name-dialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { Folder as FolderType, AssetResponse } from '@/types'
@@ -104,6 +105,7 @@ export function FolderCard({
   const [isDragOver, setIsDragOver] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const startDownload = useDownloadStore((s) => s.startDownload)
   const menuRef = React.useRef<HTMLDivElement>(null)
 
   // Close menu on outside click
@@ -208,6 +210,16 @@ export function FolderCard({
                     }}
                   >
                     <Share2 className="h-3 w-3" /> Share
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuOpen(false)
+                      startDownload(folder.id, folder.name)
+                    }}
+                  >
+                    <Download className="h-3 w-3" /> Download
                   </button>
                   <button
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10"

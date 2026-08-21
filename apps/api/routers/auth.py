@@ -95,7 +95,8 @@ def verify_magic_code(body: VerifyMagicCodeRequest, db: Session = Depends(get_db
     # If user was pending verification, activate them
     if user.status == UserStatus.pending_verification:
         user.status = UserStatus.active
-    
+
+    user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     
     # Check if user needs to set password
@@ -114,8 +115,10 @@ def set_password(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Set password for authenticated user (after magic code verification)."""
+    """Set password for authenticated user (after magic code verification, or
+    to clear an admin-created account's forced must_change_password)."""
     current_user.password_hash = hash_password(body.password)
+    current_user.must_change_password = False
     db.commit()
     db.refresh(current_user)
     return current_user
@@ -161,8 +164,9 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
     user.status = UserStatus.active
     user.invite_token = None
     user.invite_token_expires_at = None
+    user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    
+
     return TokenResponse(
         access_token=create_access_token(str(user.id), token_version=user.token_version),
         refresh_token=create_refresh_token(str(user.id), token_version=user.token_version),
@@ -181,10 +185,16 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         or user.status == UserStatus.deactivated
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
     return TokenResponse(
         access_token=create_access_token(str(user.id), token_version=user.token_version),
         refresh_token=create_refresh_token(str(user.id), token_version=user.token_version),
-        needs_password=False,
+        # Admin-created accounts (POST /admin/users) start flagged - the
+        # password already works (it's a real login), but the frontend
+        # routes this the same as a first-login magic-code user: straight to
+        # the set-new-password screen before landing in the app.
+        needs_password=user.must_change_password,
     )
 
 
@@ -201,7 +211,7 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
     return TokenResponse(
         access_token=create_access_token(str(user.id), token_version=user.token_version),
         refresh_token=create_refresh_token(str(user.id), token_version=user.token_version),
-        needs_password=user.password_hash is None,
+        needs_password=user.password_hash is None or user.must_change_password,
     )
 
 

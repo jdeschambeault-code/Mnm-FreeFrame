@@ -12,6 +12,8 @@ import {
   LogOut,
   User,
   ChevronsLeft,
+  Cloud,
+  CloudOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -21,7 +23,7 @@ import { useBrandingStore } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Avatar } from '@/components/shared/avatar'
 import { NotificationDrawer } from './notification-drawer'
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
 import { api } from '@/lib/api'
 import { StorageUsage, StorageRing } from '@/components/shared/storage-usage'
 import type { InstanceSettings } from '@/types'
@@ -46,7 +48,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { user, logout, isSuperAdmin } = useAuthStore()
   const { files: uploadFiles, togglePanel, panelOpen } = useUploadStore()
   const { unreadCount, fetchNotifications } = useNotificationStore()
-  const { orgName, orgLogoDark, orgLogoLight } = useBrandingStore()
+  const { orgLogoDark, orgLogoLight } = useBrandingStore()
   const { theme } = useThemeStore()
   // Pick logo based on resolved theme; fall back to the other if only one is set
   const customLogo = theme === 'light'
@@ -58,6 +60,19 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     '/instance/settings',
     () => api.get<InstanceSettings>('/instance/settings'),
   )
+  const orgName = instance?.workspace_name || 'FreeFrame'
+  const [togglingRelay, setTogglingRelay] = React.useState(false)
+
+  const handleToggleAyonRelay = async () => {
+    if (!instance || togglingRelay) return
+    setTogglingRelay(true)
+    try {
+      await api.put('/instance/settings', { ayon_relay_paused: !instance.ayon_relay_paused })
+      mutate('/instance/settings')
+    } finally {
+      setTogglingRelay(false)
+    }
+  }
 
   // Fetch notifications on mount
   React.useEffect(() => { fetchNotifications() }, [fetchNotifications])
@@ -192,6 +207,33 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </span>
           )}
         </button>
+
+        {/* Ayon relay pause/resume - superadmin only, global operational switch */}
+        {isSuperAdmin && instance && (
+          <button
+            onClick={handleToggleAyonRelay}
+            disabled={togglingRelay}
+            className={cn(
+              'group relative flex w-full items-center rounded-md transition-colors duration-100 disabled:opacity-50',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              instance.ayon_relay_paused
+                ? 'text-status-error hover:bg-bg-hover/60'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? (instance.ayon_relay_paused ? 'Ayon Comments Relay: paused - click to resume' : 'Ayon Comments Relay: live - click to pause') : undefined}
+          >
+            {instance.ayon_relay_paused ? (
+              <CloudOff className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} />
+            ) : (
+              <Cloud className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} />
+            )}
+            {!collapsed && (
+              <span className="text-[13px]">
+                {instance.ayon_relay_paused ? 'Ayon Comments Relay paused' : 'Ayon Comments Relay live'}
+              </span>
+            )}
+          </button>
+        )}
       </nav>
 
       {/* Bottom section */}

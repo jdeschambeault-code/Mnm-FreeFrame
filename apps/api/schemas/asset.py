@@ -30,6 +30,7 @@ class AssetVersionResponse(BaseModel):
     created_by: uuid.UUID
     created_at: datetime
     files: list[MediaFileResponse] = []
+    ayon_version_id: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class AssetResponse(BaseModel):
@@ -49,6 +50,10 @@ class AssetResponse(BaseModel):
     updated_at: datetime
     latest_version: Optional[AssetVersionResponse] = None
     thumbnail_url: Optional[str] = None
+    ayon_project_name: Optional[str] = None
+    ayon_folder_id: Optional[str] = None
+    ayon_task_id: Optional[str] = None
+    ayon_version_id: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class AssetUpdate(BaseModel):

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional
-from sqlalchemy import String, Enum, DateTime, JSON, func, Integer
+from sqlalchemy import String, Enum, DateTime, JSON, func, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 try:
@@ -30,7 +30,18 @@ class User(Base):
     invite_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     preferences: Mapped[dict] = mapped_column(JSON, nullable=False, server_default='{}')
     token_version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    # Set when an admin creates the account with a password directly
+    # (POST /admin/users) - that password traveled over email in plaintext,
+    # so the account is forced through the same set-new-password screen a
+    # fresh invite uses, before it can be used normally.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set on every successful login (password, magic-code, and invite-accept -
+    # see routers/auth.py) - NULL until the account's first login. Powers the
+    # "Joined" column on Settings > Admin > Users, which shows this (not
+    # created_at) since an invited-but-never-logged-in account's created_at
+    # isn't actually meaningful activity to show an admin.
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class GuestUser(Base):

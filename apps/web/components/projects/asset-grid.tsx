@@ -4,6 +4,7 @@ import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
+import { useDownloadStore } from '@/stores/download-store'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/shared/avatar'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -118,6 +119,7 @@ export function AssetGrid({
 }: AssetGridProps) {
   const [selectedAssetIds, setSelectedAssetIds] = React.useState<Set<string>>(new Set())
   const [selectedFolderIds, setSelectedFolderIds] = React.useState<Set<string>>(new Set())
+  const startDownload = useDownloadStore((s) => s.startDownload)
   const [moveDialogOpen, setMoveDialogOpen] = React.useState(false)
 
   // Legacy alias
@@ -481,6 +483,13 @@ export function AssetGrid({
                             Rename
                           </DropdownMenu.Item>
                         )}
+                        <DropdownMenu.Item
+                          onSelect={() => startDownload(folder.id, folder.name)}
+                          className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
+                        >
+                          <Download className="h-3.5 w-3.5 text-text-tertiary" />
+                          Download
+                        </DropdownMenu.Item>
                         {onFolderDelete && (
                           <DropdownMenu.Item
                             onSelect={() => onFolderDelete(folder.id)}

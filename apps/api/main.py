@@ -2,9 +2,20 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import email_validator
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from .config import settings
+
+# This is a self-hosted, LAN-only deployment - admin/user emails intentionally
+# use .local-style addresses (e.g. admin@mnm.local) that never need to be
+# globally routable. email_validator (the EmailStr backend used in
+# schemas/auth.py and routers/setup.py) rejects "local" as a reserved-use TLD
+# by default (RFC 6762); patch its shared domain list once, here, rather than
+# at every EmailStr call site.
+if "local" in email_validator.SPECIAL_USE_DOMAIN_NAMES:
+    email_validator.SPECIAL_USE_DOMAIN_NAMES.remove("local")
 from .routers import auth, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, instance_settings
 from .services.s3_service import run_startup_bucket_setup
 from .services.email_service import mail_is_configured
@@ -82,6 +93,21 @@ app.include_router(setup.router)
 app.include_router(folders.router)
 app.include_router(hls_proxy.router)
 app.include_router(instance_settings.router)
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Without this, an unhandled exception (e.g. a raw IntegrityError) propagates
+    # past CORSMiddleware to Starlette's outer ServerErrorMiddleware, which
+    # returns a 500 with no CORS headers - the browser can't read a cross-origin
+    # response without those, so the frontend sees a bare "Failed to fetch"
+    # instead of the actual error. Catching it here keeps the response inside
+    # ExceptionMiddleware (and therefore CORSMiddleware) so headers get added
+    # normally, and the client gets a real, readable error.
+    logging.getLogger("apps.api.unhandled").exception(
+        "Unhandled exception on %s %s", request.method, request.url.path
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 @app.get("/health")
 def health():

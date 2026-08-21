@@ -44,6 +44,21 @@ def initiate_upload(
         raise HTTPException(status_code=404, detail="Project not found")
     require_project_role(db, body.project_id, current_user, ProjectRole.editor)
 
+    # Validate the target folder whenever one is given - it must exist, belong to this project,
+    # and not be soft-deleted, otherwise a live version could be filed under a trashed folder and
+    # later hard-deleted by the retention GC's folder cascade. Applies to both a brand-new asset
+    # AND a new version of an existing one: each AssetVersion now carries its own folder_id (see
+    # the model), so e.g. ayon_client_watcher.py's per-delivery-date folders are each honored even
+    # when the file attaches to an asset that already exists from a different date's delivery.
+    if body.folder_id is not None:
+        folder = db.query(Folder).filter(
+            Folder.id == body.folder_id,
+            Folder.project_id == body.project_id,
+            Folder.deleted_at.is_(None),
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
     # Get or create asset
     if body.asset_id:
         asset = db.query(Asset).filter(Asset.id == body.asset_id, Asset.deleted_at.is_(None)).first()
@@ -51,20 +66,14 @@ def initiate_upload(
             raise HTTPException(status_code=404, detail="Asset not found")
         if asset.project_id != body.project_id:
             raise HTTPException(status_code=400, detail="Asset does not belong to the specified project")
+        # Asset.name itself is left alone here (stays whatever the first
+        # delivered file was named) - the *displayed* name for a given
+        # context now comes from the actually-resolved version's own
+        # MediaFile.original_filename at response-build time (see
+        # routers/assets.py's _build_asset_response/_bulk), which is always
+        # correct per-version/per-folder instead of one shared field trying
+        # to track "whichever delivery arrived last".
     else:
-        # Validate the target folder for a new asset: it must exist, belong to this project, and not
-        # be soft-deleted -- otherwise a live asset could be placed under a trashed folder and later
-        # hard-deleted by the retention GC's folder cascade. folder_id is only persisted here (new
-        # asset); the new-version path above ignores it, so it must not be validated there.
-        if body.folder_id is not None:
-            folder = db.query(Folder).filter(
-                Folder.id == body.folder_id,
-                Folder.project_id == body.project_id,
-                Folder.deleted_at.is_(None),
-            ).first()
-            if not folder:
-                raise HTTPException(status_code=404, detail="Folder not found")
-
         asset_type = mime_to_asset_type(body.mime_type)
         asset = Asset(
             project_id=body.project_id,
@@ -72,6 +81,10 @@ def initiate_upload(
             asset_type=asset_type,
             created_by=current_user.id,
             folder_id=body.folder_id,
+            ayon_project_name=body.ayon_project_name,
+            ayon_folder_id=body.ayon_folder_id,
+            ayon_task_id=body.ayon_task_id,
+            ayon_version_id=body.ayon_version_id,
         )
         db.add(asset)
         db.flush()
@@ -81,14 +94,36 @@ def initiate_upload(
         AssetVersion.asset_id == asset.id,
         AssetVersion.deleted_at.is_(None),
     ).order_by(AssetVersion.version_number.desc()).first()
-    next_version_number = (last_version.version_number + 1) if last_version else 1
+    # Prefer the real Ayon version number whenever the caller has one
+    # (ayon_client_watcher.py always does), not just on first-ever-version -
+    # ayon_client_watcher.py can now attach a new version to an asset that
+    # already exists (matched by ayon_task_id/ayon_folder_id, see
+    # routers/assets.py's list filter), and Ayon deliveries aren't
+    # guaranteed contiguous (e.g. v003 then v005) - blindly incrementing
+    # from the last stored version_number would silently mislabel the
+    # version shown in FreeFrame vs. what Ayon actually calls it. Manual
+    # "New Version" uploads from the web UI never set ayon_version_number,
+    # so this doesn't change that path at all.
+    if body.ayon_version_number is not None:
+        next_version_number = body.ayon_version_number
+    else:
+        next_version_number = (last_version.version_number + 1) if last_version else 1
 
     # Build S3 key: raw/{project_id}/{asset_id}/{version_id}/{filename}
     version = AssetVersion(
         asset_id=asset.id,
         version_number=next_version_number,
+        folder_id=body.folder_id,
         processing_status=ProcessingStatus.uploading,
         created_by=current_user.id,
+        # Always set, unlike Asset.ayon_version_id above (which is only ever
+        # written when a brand-new asset is created) - a later version
+        # attaching to an EXISTING asset (body.asset_id set) is a copy of a
+        # DIFFERENT real Ayon version than the asset's first delivery was,
+        # so each version needs to remember its own (see the model's
+        # docstring - this is what ayon_relay.py now reads per-comment
+        # instead of the stale asset-level field).
+        ayon_version_id=body.ayon_version_id,
     )
     db.add(version)
     db.flush()

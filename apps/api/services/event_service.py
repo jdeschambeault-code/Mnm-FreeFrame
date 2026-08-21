@@ -22,6 +22,21 @@ async def publish(project_id: str, event_type: str, payload: dict) -> None:
     await r.publish(f"project:{project_id}", message)
 
 
+def publish_sync(project_id: str, event_type: str, payload: dict) -> None:
+    """Sync counterpart to publish(), for the (sync-style) route handlers -
+    same pattern tasks/transcode_tasks.py's _publish_event uses from Celery.
+    Best-effort: a Redis hiccup here must never fail the request that
+    triggered it (e.g. posting a comment).
+    """
+    try:
+        from .redis_service import get_redis
+        r = get_redis()
+        message = json.dumps({"type": event_type, "payload": payload})
+        r.publish(f"project:{project_id}", message)
+    except Exception:
+        pass
+
+
 async def event_stream(project_id: str) -> AsyncGenerator[str, None]:
     """Subscribe to a Redis channel and yield SSE messages."""
     r = _get_redis()

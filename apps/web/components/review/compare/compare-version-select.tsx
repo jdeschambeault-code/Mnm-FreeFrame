@@ -6,6 +6,20 @@ import { cn } from '@/lib/utils'
 import { versionStatusConfig } from '@/components/review/version-switcher'
 import type { AssetVersion } from '@/types'
 
+// Matches the delivered filename's version token (e.g. "v002" in
+// "zd_111_reviewAnimation_v002_h264.mp4") so it can be visually
+// distinguished from the rest of the name - the point is to make it obvious
+// at a glance that two versions are the *same* shot (identical surrounding
+// text) differing only in that token, not just a bare "v1"/"v2" with no
+// name context to compare against.
+const VERSION_TOKEN_RE = /v\d{2,}/i
+
+function splitVersionToken(name: string): [string, string, string] | null {
+  const m = VERSION_TOKEN_RE.exec(name)
+  if (!m) return null
+  return [name.slice(0, m.index), m[0], name.slice(m.index + m[0].length)]
+}
+
 interface CompareVersionSelectProps {
   versions: AssetVersion[]
   value: string | null
@@ -52,7 +66,7 @@ export function CompareVersionSelect({ versions, value, onChange, accentClass, e
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 top-full z-[100] mt-1 min-w-[140px] rounded-lg border border-border bg-bg-elevated p-1 shadow-xl"
+          className="absolute left-0 top-full z-[100] mt-1 min-w-[280px] max-w-[420px] rounded-lg border border-border bg-bg-elevated p-1 shadow-xl"
         >
           {sorted.map((v) => {
             const status = versionStatusConfig[v.processing_status]
@@ -61,6 +75,8 @@ export function CompareVersionSelect({ versions, value, onChange, accentClass, e
             // sides can't collapse onto the same version.
             const onOtherSide = v.id === excludeId
             const blocked = !ready || onOtherSide
+            const filename = v.files?.[0]?.original_filename
+            const parts = filename ? splitVersionToken(filename) : null
             return (
               <button
                 key={v.id}
@@ -68,7 +84,7 @@ export function CompareVersionSelect({ versions, value, onChange, accentClass, e
                 role="option"
                 aria-selected={v.id === value}
                 disabled={blocked}
-                title={onOtherSide ? 'Shown on the other side' : undefined}
+                title={onOtherSide ? 'Shown on the other side' : filename}
                 onClick={() => {
                   if (blocked) return
                   onChange(v)
@@ -80,12 +96,20 @@ export function CompareVersionSelect({ versions, value, onChange, accentClass, e
                   blocked && 'opacity-50 cursor-not-allowed',
                 )}
               >
-                <span>v{v.version_number}</span>
+                {parts ? (
+                  <span className="truncate text-left">
+                    <span className="text-text-tertiary">{parts[0]}</span>
+                    <span className={cn('font-semibold', accentClass)}>{parts[1]}</span>
+                    <span className="text-text-tertiary">{parts[2]}</span>
+                  </span>
+                ) : (
+                  <span>v{v.version_number}</span>
+                )}
                 {onOtherSide ? (
-                  <span className="text-[11px] text-text-tertiary">in use</span>
+                  <span className="shrink-0 text-[11px] text-text-tertiary">in use</span>
                 ) : status && !ready ? (
                   <span
-                    className={cn('inline-flex items-center gap-1 text-[11px]', status.className)}
+                    className={cn('shrink-0 inline-flex items-center gap-1 text-[11px]', status.className)}
                     title={status.label}
                   >
                     {status.icon}

@@ -447,3 +447,71 @@ def sweep_orphan_s3():
         return asdict(_sweep_orphan_s3(db))
     finally:
         db.close()
+
+
+_FOLDER_DOWNLOAD_MAX_AGE_DAYS = 3
+
+
+def _sweep_download_temp_dir(root) -> int:
+    """Removes timestamped scratch dirs directly under `root` older than
+    _FOLDER_DOWNLOAD_MAX_AGE_DAYS. Shared by both temp locations
+    cleanup_folder_downloads sweeps (see its docstring)."""
+    if not root.exists():
+        return 0
+    cutoff = datetime.now(timezone.utc).timestamp() - _FOLDER_DOWNLOAD_MAX_AGE_DAYS * 86400
+    removed = 0
+    for child in root.iterdir():
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                for f in child.iterdir():
+                    f.unlink(missing_ok=True)
+                child.rmdir()
+                removed += 1
+        except OSError as exc:
+            log.warning("cleanup_folder_downloads: couldn't remove %s: %s", child, exc)
+    return removed
+
+
+@celery_app.task(name="cleanup_folder_downloads")
+def cleanup_folder_downloads():
+    """Periodic beat task: deletes timestamped scratch dirs older than
+    _FOLDER_DOWNLOAD_MAX_AGE_DAYS from wherever routers/folders.py's
+    "..." -> Download folder zip export stages them:
+
+    - {tempdir}/freeframe_downloads/ - the OS-temp fallback used for
+      non-Ayon-linked folders (or if a project's NAS delivery path isn't
+      reachable from this machine).
+    - {clientROOTS}/{project}/temp/ - for Ayon-linked projects, staged
+      alongside the delivery itself instead of a local temp dir.
+
+    Each dir is already best-effort deleted right after its own download
+    finishes (routers/folders.py's FileResponse background cleanup) - this
+    is the backstop for ones that survive that (browser cancelled the
+    download, process restarted mid-request, etc.)."""
+    import tempfile
+    from pathlib import Path
+    from ..models.project import Project
+    from ..services import ayon_service
+
+    removed = _sweep_download_temp_dir(Path(tempfile.gettempdir()) / "freeframe_downloads")
+
+    db = SessionLocal()
+    try:
+        ayon_project_names = [
+            p.ayon_project_name for p in db.query(Project.ayon_project_name).filter(
+                Project.ayon_project_name.isnot(None), Project.deleted_at.is_(None)
+            ).all()
+        ]
+    finally:
+        db.close()
+
+    for name in ayon_project_names:
+        try:
+            client_root = ayon_service.get_project_client_delivery_path(name)
+        except Exception as exc:
+            log.warning("cleanup_folder_downloads: couldn't resolve clientROOTS for %s: %s", name, exc)
+            continue
+        if client_root:
+            removed += _sweep_download_temp_dir(Path(client_root) / "temp")
+
+    return {"removed": removed}

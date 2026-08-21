@@ -52,6 +52,11 @@ interface ReviewProviderProps {
   assetId: string;
   shareToken?: string; // If set, uses share token API instead of authenticated API
   shareSession?: string | null;
+  // Opens straight to this version_number instead of the latest-ready one -
+  // e.g. clicking an asset card from inside a specific version's folder
+  // (see AssetVersion.folder_id) should open showing THAT version, not
+  // always whatever's globally newest for the asset.
+  initialVersionNumber?: number | null;
   children: React.ReactNode;
 }
 
@@ -59,6 +64,7 @@ export function ReviewProvider({
   assetId,
   shareToken,
   shareSession,
+  initialVersionNumber,
   children,
 }: ReviewProviderProps) {
   const [asset, setAsset] = useState<AssetResponse | null>(null);
@@ -155,9 +161,17 @@ export function ReviewProvider({
         if (!mountedRef.current) return;
         setVersions(allVersions ?? []);
 
-        const readyVersion = (allVersions ?? [])
-          .sort((a, b) => b.version_number - a.version_number)
-          .find((v) => v.processing_status === "ready");
+        const requestedVersion =
+          initialVersionNumber != null
+            ? (allVersions ?? []).find(
+                (v) => v.version_number === initialVersionNumber && v.processing_status === "ready",
+              )
+            : undefined;
+        const readyVersion =
+          requestedVersion ??
+          (allVersions ?? [])
+            .sort((a, b) => b.version_number - a.version_number)
+            .find((v) => v.processing_status === "ready");
         if (readyVersion) {
           setCurrentVersion(readyVersion);
         } else if (data.latest_version) {
@@ -203,7 +217,7 @@ export function ReviewProvider({
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load asset");
     }
-  }, [assetId, shareToken, shareSessionParam, setCurrentAsset, setCurrentVersion]);
+  }, [assetId, shareToken, shareSessionParam, initialVersionNumber, setCurrentAsset, setCurrentVersion]);
 
   const fetchComments = useCallback(async () => {
     const reqId = ++commentsReqRef.current;

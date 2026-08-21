@@ -52,6 +52,20 @@ class InitiateUploadRequest(BaseModel):
     # For new version of existing asset
     asset_id: uuid.UUID | None = None
     folder_id: uuid.UUID | None = None
+    # Set by scripts/ayon_client_watcher.py when ingesting an Ayon delivery -
+    # only applied on new-asset creation (see routers/upload.py), same as
+    # folder_id above.
+    ayon_project_name: str | None = None
+    ayon_folder_id: str | None = None
+    ayon_task_id: str | None = None
+    ayon_version_id: str | None = None
+    # The real Ayon version number (e.g. 3 for "v003"), parsed from the delivery
+    # filename - only applied on new-asset creation (see routers/upload.py), so
+    # FreeFrame's displayed version matches the Ayon/on-disk naming convention
+    # instead of always starting at v1 (every ingested delivery becomes its own
+    # new Asset, never a new version of an existing one - see
+    # ayon_client_watcher.py's ingest_new_deliveries).
+    ayon_version_number: int | None = None
 
 class InitiateUploadResponse(BaseModel):
     upload_id: str

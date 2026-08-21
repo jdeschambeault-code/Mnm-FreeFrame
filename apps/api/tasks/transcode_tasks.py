@@ -102,7 +102,12 @@ def _process_video(db, asset, version, media_file, s3, output_prefix):
         raise RuntimeError(f"Transcode failed: {result.error}")
 
     media_file.s3_key_processed = result.hls_prefix
-    if result.thumbnail_keys:
+    # Only fill this if nothing's already there - a caller (e.g.
+    # POST /assets/{id}/versions/{id}/thumbnail, used by
+    # scripts/ayon_client_watcher.py for delivered *_thumbnail.jpg files) may
+    # have already set a preferred thumbnail before this async task got to
+    # run, and that should always win over the auto-extracted frame.
+    if result.thumbnail_keys and not media_file.s3_key_thumbnail:
         media_file.s3_key_thumbnail = result.thumbnail_keys[0]
     if result.duration_seconds:
         media_file.duration_seconds = result.duration_seconds

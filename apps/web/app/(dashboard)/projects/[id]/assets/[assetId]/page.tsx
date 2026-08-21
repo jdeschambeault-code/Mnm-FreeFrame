@@ -240,6 +240,11 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     currentVersion?.processing_status === 'processing' ||
     currentVersion?.processing_status === 'uploading'
 
+  // The displayed filename must track whichever version is currently open in the
+  // switcher, not just the asset's own (latest-version-resolved) name — otherwise
+  // switching to an older version still shows the newest version's filename.
+  const displayFileName = currentVersion?.files?.[0]?.original_filename ?? asset.name
+
   const renderMediaViewer = () => {
     if (!currentVersion || !versionReady) {
       return (
@@ -347,15 +352,19 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         {/* Left: back + breadcrumb */}
         <div className="flex items-center gap-1 min-w-0 flex-1">
           <Link
-            href={`/projects/${asset.project_id}`}
+            href={
+              asset.folder_id
+                ? `/projects/${asset.project_id}?folder=${asset.folder_id}`
+                : `/projects/${asset.project_id}`
+            }
             className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors shrink-0"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
 
-          {/* Asset name only */}
+          {/* Filename of the currently open version */}
           <span className="text-[13px] text-text-primary font-medium truncate">
-            {asset.name}
+            {displayFileName}
           </span>
         </div>
 
@@ -520,7 +529,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Name</span>
-                      <span className="text-xs text-text-primary font-medium truncate ml-4">{asset.name}</span>
+                      <span className="text-xs text-text-primary font-medium truncate ml-4">{displayFileName}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Type</span>
@@ -564,9 +573,15 @@ export default function ReviewPage({
   params: { id: string; assetId: string }
 }) {
   const { id: projectId, assetId } = params
+  const searchParams = useSearchParams()
+  // Clicking an asset card from a specific version's folder (see
+  // AssetVersion.folder_id) passes ?version=<N> so the review opens showing
+  // that version instead of always the asset's globally latest.
+  const versionParam = searchParams.get('version')
+  const initialVersionNumber = versionParam ? Number(versionParam) : null
 
   return (
-    <ReviewProvider assetId={assetId}>
+    <ReviewProvider assetId={assetId} initialVersionNumber={initialVersionNumber}>
       <ReviewScreenInner projectId={projectId} />
     </ReviewProvider>
   )

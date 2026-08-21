@@ -56,6 +56,7 @@ const config: Config = {
         'scale-in': 'scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
         'shimmer': 'shimmer 2s linear infinite',
         'pulse-soft': 'pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'indeterminate': 'indeterminate 1.2s ease-in-out infinite',
       },
       keyframes: {
         'fade-in': {
@@ -89,6 +90,10 @@ const config: Config = {
         'pulse-soft': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.6' },
+        },
+        'indeterminate': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(300%)' },
         },
       },
       transitionTimingFunction: {

@@ -29,6 +29,10 @@ class Project(Base):
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     poster_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Set when this project was activated from an Ayon project via
+    # /admin/ayon/projects/{name}/activate. Unique so at most one FreeFrame
+    # project maps to a given Ayon project.
+    ayon_project_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -42,3 +46,18 @@ class ProjectMember(Base):
     invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class UserHiddenProject(Base):
+    """Lets a staff user (see services/permissions.is_staff_user) personally
+    opt out of seeing a specific project in their own project list, without
+    affecting anyone else or the project itself - staff see every non-
+    deleted project by default (routers/projects.py list_projects), unlike
+    non-staff/client users, who only ever see projects they're an explicit
+    ProjectMember of. Irrelevant for non-staff users - they have no "sees
+    everything by default" behavior to opt out of."""
+    __tablename__ = "user_hidden_projects"
+    __table_args__ = (UniqueConstraint("user_id", "project_id", name="uq_user_hidden_projects_user_project"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
+    hidden_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

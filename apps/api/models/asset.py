@@ -47,6 +47,14 @@ class Asset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Set only for assets ingested by scripts/ayon_client_watcher.py from an
+    # Ayon DELIVERY_CLIENT_FREEFRAME delivery - the entity a client comment on this
+    # asset should be relayed back to (see routers/comments.py / ayon_relay.py).
+    ayon_project_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ayon_folder_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    ayon_task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ayon_version_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
     __table_args__ = (
         Index("ix_assets_project_folder_deleted", "project_id", "folder_id", "deleted_at"),
     )
@@ -57,10 +65,38 @@ class AssetVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False, index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Where THIS version's own source file was delivered/uploaded to -
+    # independent of Asset.folder_id (the asset's own "primary" location,
+    # set once at creation and otherwise unchanged). Different versions of
+    # one asset can land in different folders (e.g. ayon_client_watcher.py
+    # deliveries organized by date: 2026-08-20/.../v002 and
+    # 2026-08-21/.../v003 both attach to the same asset for Compare
+    # Versions, but each date's folder should still show what was actually
+    # delivered there - see routers/assets.py list_assets's folder-scoped
+    # "latest version" and routers/folders.py's item counts, both of which
+    # read this instead of only Asset.folder_id). NULL on versions created
+    # before this column existed - those fall back to Asset.folder_id.
+    folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("folders.id"), nullable=True, index=True)
     processing_status: Mapped[ProcessingStatus] = mapped_column(Enum(ProcessingStatus), default=ProcessingStatus.uploading)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # The real Ayon version this specific delivered version is a copy of -
+    # independent of Asset.ayon_version_id (set once, at first-ever-ingestion,
+    # and never updated after). Every later version delivered onto the SAME
+    # asset (v002, v003, ...) is a copy of a DIFFERENT Ayon version than v001
+    # was, so without a per-version field here, ayon_relay.py had no way to
+    # know which one a given comment was actually about and always fell back
+    # to whatever Asset.ayon_version_id happened to be (v001's - the bug
+    # reported 2026-08-21: "all comments go to v001"). ayon_task_id/
+    # ayon_folder_id are NOT duplicated here since every version of one
+    # asset is matched (find_existing_asset_id) on those SAME two ids by
+    # construction - only the version id actually varies per version. NULL
+    # on versions created before this column existed, or when the version
+    # wasn't resolved back to a real Ayon entity - the relay still falls
+    # back to the asset-level task/folder in that case.
+    ayon_version_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 class FileType(str, PyEnum):
     image = "image"

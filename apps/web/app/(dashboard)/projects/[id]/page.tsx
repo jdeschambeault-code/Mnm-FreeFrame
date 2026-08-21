@@ -80,6 +80,15 @@ export default function ProjectDetailPage() {
   const [currentFolderId, setCurrentFolderId] = React.useState<string | null>(
     searchParams.get("folder") || null,
   );
+  // useState's initializer only runs on mount, so it doesn't catch the
+  // "folder" query param changing via a real Next navigation afterward
+  // (e.g. the breadcrumb's <Link> in header.tsx) - handleSelectFolder's own
+  // in-grid clicks bypass this entirely via window.history.replaceState
+  // (deliberately, to skip a full re-render), so this only fires for
+  // navigations Next's router actually sees, like the breadcrumb.
+  React.useEffect(() => {
+    setCurrentFolderId(searchParams.get("folder") || null);
+  }, [searchParams]);
   const [showTrash, setShowTrash] = React.useState(false);
   const [showShareLinks, setShowShareLinks] = React.useState(false);
   const [selectedShareLink, setSelectedShareLink] = React.useState<
@@ -704,9 +713,17 @@ export default function ProjectDetailPage() {
                 e?.stopPropagation();
                 setSelectedAsset(asset as AssetResponse);
               }}
-              onAssetOpen={(asset) =>
-                router.push(`/projects/${projectId}/assets/${asset.id}`)
-              }
+              onAssetOpen={(asset) => {
+                // asset.latest_version here is folder-scoped (see
+                // routers/assets.py list_assets's folder_scope) - it's
+                // whatever version was actually delivered to the folder
+                // being browsed, not necessarily the asset's true latest.
+                // Carry that through so the review opens on the version the
+                // card actually showed, not always the globally newest one.
+                const v = (asset as AssetResponse).latest_version?.version_number;
+                const qs = v != null ? `?version=${v}` : '';
+                router.push(`/projects/${projectId}/assets/${asset.id}${qs}`);
+              }}
               onFolderOpen={(folder) => handleSelectFolder(folder.id)}
               onFolderRename={async (id, name) => {
                 await renameFolder(id, name);
@@ -992,7 +1009,7 @@ export default function ProjectDetailPage() {
                     {/* Quick link to open in viewer */}
                     <div className="border-t border-border p-3 shrink-0">
                       <Link
-                        href={`/projects/${projectId}/assets/${selectedAsset.id}`}
+                        href={`/projects/${projectId}/assets/${selectedAsset.id}${selectedAsset.latest_version?.version_number != null ? `?version=${selectedAsset.latest_version.version_number}` : ''}`}
                       >
                         <div className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-tertiary cursor-pointer hover:border-border-focus transition-colors text-center">
                           Open in viewer to comment
@@ -1087,7 +1104,7 @@ export default function ProjectDetailPage() {
                     <div className="pt-3 border-t border-border grid grid-cols-2 gap-2">
                       <Button asChild className="w-full col-span-2" size="sm">
                         <Link
-                          href={`/projects/${projectId}/assets/${selectedAsset.id}`}
+                          href={`/projects/${projectId}/assets/${selectedAsset.id}${selectedAsset.latest_version?.version_number != null ? `?version=${selectedAsset.latest_version.version_number}` : ''}`}
                         >
                           Open in Player
                         </Link>

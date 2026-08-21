@@ -3,7 +3,7 @@
 import * as React from "react";
 import useSWR, { mutate } from "swr";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Users, Plus, X, Shield, Link2, Check } from "lucide-react";
+import { Users, Plus, X, Shield, Link2, Check, UserPlus, RefreshCw } from "lucide-react";
 import { cn, copyToClipboard } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,16 @@ import { Avatar } from "@/components/shared/avatar";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRouter } from "next/navigation";
-import type { User, UserStatus } from "@/types";
+import type { User, UserStatus, InstanceSettings } from "@/types";
 import { InstanceSettingsTab } from "@/components/settings/instance-settings-tab";
+import { EmailSettingsTab } from "@/components/settings/email-settings-tab";
+import { AyonProjectsTab } from "@/components/settings/ayon-projects-tab";
+import { UserProjectAccessModal } from "@/components/settings/user-project-access-modal";
 
 function BulkInviteDialog() {
   const [open, setOpen] = React.useState(false);
   const [emails, setEmails] = React.useState("");
+  const [message, setMessage] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [success, setSuccess] = React.useState("");
@@ -39,7 +43,11 @@ function BulkInviteDialog() {
       for (const email of emailList) {
         try {
           const name = email.split("@")[0];
-          await api.post("/users/invite", { email, name });
+          await api.post("/users/invite", {
+            email,
+            name,
+            custom_message: message.trim() || undefined,
+          });
           sent++;
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : "";
@@ -59,6 +67,7 @@ function BulkInviteDialog() {
         setSuccess(parts.join(", "));
         if (failed.length === 0) {
           setEmails("");
+          setMessage("");
           setTimeout(() => setOpen(false), 1500);
         }
       }
@@ -108,6 +117,21 @@ function BulkInviteDialog() {
                 className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus resize-none"
               />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">
+                Message (optional)
+              </label>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder={"Add a personal note to the invite email. Variables: {{site_name}}, {{recipient_name}}, {{inviter_name}}, {{invite_link}}"}
+                rows={3}
+                className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus resize-none"
+              />
+              <p className="text-xs text-text-tertiary">
+                Inserted into the default invite email. Leave blank to send the standard message.
+              </p>
+            </div>
             {error && <p className="text-xs text-status-error">{error}</p>}
             {success && (
               <p className="text-xs text-status-success">{success}</p>
@@ -123,6 +147,150 @@ function BulkInviteDialog() {
               </Button>
               <Button type="submit" size="sm" loading={loading}>
                 Send Invites
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function generatePassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+  return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function CreateUserDialog() {
+  const [open, setOpen] = React.useState(false);
+  const [name, setName] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [cc, setCc] = React.useState("notifications@methodnmadness.com");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [success, setSuccess] = React.useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !email.trim() || password.length < 8) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const cc_emails = cc
+        .split(/[\n,]/)
+        .map((c) => c.trim())
+        .filter(Boolean);
+      await api.post("/admin/users", {
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        cc_emails,
+      });
+      mutate("/admin/users");
+      setSuccess("User created — credentials emailed.");
+      setName("");
+      setEmail("");
+      setPassword("");
+      setTimeout(() => setOpen(false), 1500);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create user");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) {
+          setError("");
+          setSuccess("");
+        }
+      }}
+    >
+      <Dialog.Trigger asChild>
+        <Button variant="secondary" size="sm">
+          <UserPlus className="h-4 w-4" />
+          Create User
+        </Button>
+      </Dialog.Trigger>
+
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+          <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
+            <X className="h-4 w-4" />
+          </Dialog.Close>
+
+          <Dialog.Title className="text-base font-semibold text-text-primary">
+            Create User
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm text-text-secondary">
+            Creates an active account with the password below and emails the credentials.
+            The user must set a new password on first login.
+          </Dialog.Description>
+
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">Name</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">Email</label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="jane@example.com"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">Password</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPassword(generatePassword())}
+                  title="Generate a password"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">CC on credentials email</label>
+              <Input
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="notifications@methodnmadness.com"
+              />
+              <p className="text-xs text-text-tertiary">
+                Comma-separated. Edit or clear as needed — this is just a starting default, not saved.
+              </p>
+            </div>
+            {error && <p className="text-xs text-status-error">{error}</p>}
+            {success && <p className="text-xs text-status-success">{success}</p>}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(false)}>
+                Close
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                loading={loading}
+                disabled={!name.trim() || !email.trim() || password.length < 8}
+              >
+                Create User
               </Button>
             </div>
           </form>
@@ -167,12 +335,19 @@ function userStatusBadge(status: UserStatus) {
 export default function AdminPage() {
   const { user, isSuperAdmin } = useAuthStore();
   const router = useRouter();
-  const [tab, setTab] = React.useState<"users" | "instance">("users");
+  const [tab, setTab] = React.useState<"users" | "instance" | "ayon" | "email">("users");
 
   const { data: usersResp, isLoading: loadingUsers } = useSWR<User[]>(
     isSuperAdmin ? "/admin/users" : null,
     () => api.get<User[]>("/admin/users"),
   );
+
+  const { data: instanceSettings } = useSWR<InstanceSettings>(
+    isSuperAdmin ? "/instance/settings" : null,
+    () => api.get<InstanceSettings>("/instance/settings"),
+  );
+  const staffDomains = new Set((instanceSettings?.staff_email_domains ?? []).map((d) => d.toLowerCase()));
+  const isStaffEmail = (email: string) => staffDomains.has(email.split("@")[1]?.toLowerCase() ?? "");
 
   React.useEffect(() => {
     if (user && !isSuperAdmin) {
@@ -198,6 +373,20 @@ export default function AdminPage() {
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Failed to reactivate user";
+      alert(message);
+    }
+  };
+
+  const handleDelete = async (userId: string, name: string) => {
+    if (!confirm(`Permanently delete "${name}"? This cannot be undone - use Deactivate instead if you just want to revoke access temporarily.`)) {
+      return;
+    }
+    try {
+      await api.delete(`/users/${userId}`);
+      mutate("/admin/users");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to delete user";
       alert(message);
     }
   };
@@ -252,7 +441,7 @@ export default function AdminPage() {
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-border">
-        {([["users", "Users"], ["instance", "Instance settings"]] as const).map(([key, label]) => (
+        {([["users", "Users"], ["instance", "Instance settings"], ["ayon", "Ayon Projects"], ["email", "Email"]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -269,6 +458,8 @@ export default function AdminPage() {
       </div>
 
       {tab === "instance" && <InstanceSettingsTab />}
+      {tab === "ayon" && <AyonProjectsTab />}
+      {tab === "email" && <EmailSettingsTab />}
 
       {/* User management */}
       {tab === "users" && (
@@ -277,7 +468,10 @@ export default function AdminPage() {
           <h2 className="text-sm font-semibold text-text-primary">
             Platform Users
           </h2>
-          <BulkInviteDialog />
+          <div className="flex items-center gap-2">
+            <CreateUserDialog />
+            <BulkInviteDialog />
+          </div>
         </div>
 
         {loadingUsers ? (
@@ -312,7 +506,7 @@ export default function AdminPage() {
                     Status
                   </th>
                   <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
-                    Joined
+                    Last login
                   </th>
                   <th className="px-4 py-2.5 text-right text-xs font-medium text-text-tertiary">
                     Actions
@@ -349,10 +543,10 @@ export default function AdminPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">{userStatusBadge(u.status)}</td>
-                    <td className="px-4 py-3 text-xs text-text-tertiary">
-                      {u.created_at
-                        ? new Date(u.created_at).toLocaleDateString()
-                        : "—"}
+                    <td className="px-4 py-3 text-xs text-text-tertiary" title={u.created_at ? `Joined ${new Date(u.created_at).toLocaleString()}` : undefined}>
+                      {u.last_login_at
+                        ? new Date(u.last_login_at).toLocaleString()
+                        : "Never"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
@@ -387,6 +581,9 @@ export default function AdminPage() {
                             {u.is_superadmin ? "Remove Admin" : "Make Admin"}
                           </Button>
                         )}
+                        {!isStaffEmail(u.email) && (
+                          <UserProjectAccessModal userId={u.id} userName={u.name} />
+                        )}
                         {u.id !== user?.id && u.status === "active" ? (
                           <Button
                             variant="ghost"
@@ -409,6 +606,16 @@ export default function AdminPage() {
                             You
                           </span>
                         ) : null}
+                        {u.id !== user?.id && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(u.id, u.name)}
+                            className="text-status-error hover:text-status-error"
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>

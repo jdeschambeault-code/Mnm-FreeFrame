@@ -7,7 +7,9 @@ import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock } from 'lucide
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 import { ProjectSettingsDialog } from './project-settings-dialog'
+import { DeleteProjectDialog } from './delete-project-dialog'
 import type { Project } from '@/types'
 
 interface ProjectCardProps {
@@ -28,9 +30,20 @@ export function ProjectCard({
   const gradient = getGradientForProject(project.id)
   const assetCount = project.asset_count ?? 0
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  const { isSuperAdmin } = useAuthStore()
 
+  // Superadmins get the full purge (DB + object storage + best-effort NAS
+  // trash-move, see DeleteProjectDialog / POST /admin/projects/{id}/purge-now)
+  // instead of the plain soft-delete below - that endpoint is admin-only, so
+  // a non-admin owner still gets the regular (reversible-by-retention-window)
+  // delete.
   const handleDelete = async () => {
+    if (isSuperAdmin) {
+      setDeleteDialogOpen(true)
+      return
+    }
     if (!confirm(`Delete "${project.name}"? This action cannot be undone.`)) return
     setDeleting(true)
     try {
@@ -159,6 +172,16 @@ export function ProjectCard({
         onOpenChange={setSettingsOpen}
         onUpdated={() => onMutate?.()}
       />
+
+      {isSuperAdmin && (
+        <DeleteProjectDialog
+          projectId={project.id}
+          projectName={project.name}
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onDeleted={() => onMutate?.()}
+        />
+      )}
     </>
   )
 }

@@ -38,6 +38,9 @@ def _build_response(db: Session, row: InstanceSettings) -> InstanceSettingsRespo
     return InstanceSettingsResponse(
         storage_limit_bytes=row.storage_limit_bytes,
         storage_used_bytes=storage_service.instance_storage_used_bytes(db),
+        staff_email_domains=row.staff_email_domains or [],
+        workspace_name=row.workspace_name or "FreeFrame",
+        ayon_relay_paused=row.ayon_relay_paused,
     )
 
 
@@ -54,6 +57,9 @@ def get_instance_settings(
     row = db.query(InstanceSettings).first()
     return InstanceSettingsResponse(
         storage_limit_bytes=row.storage_limit_bytes if row else 0,
+        staff_email_domains=(row.staff_email_domains or []) if row else ["mnm.local", "methodnmadness.com"],
+        workspace_name=(row.workspace_name or "FreeFrame") if row else "FreeFrame",
+        ayon_relay_paused=row.ayon_relay_paused if row else False,
         storage_used_bytes=storage_service.instance_storage_used_bytes(db),
     )
 
@@ -68,6 +74,12 @@ def update_instance_settings(
     row = get_or_create_instance_settings(db)
     if body.storage_limit_bytes is not None:
         row.storage_limit_bytes = body.storage_limit_bytes
+    if body.staff_email_domains is not None:
+        row.staff_email_domains = [d.strip().lower() for d in body.staff_email_domains if d.strip()]
+    if body.workspace_name is not None:
+        row.workspace_name = body.workspace_name.strip()
+    if body.ayon_relay_paused is not None:
+        row.ayon_relay_paused = body.ayon_relay_paused
     db.commit()
     db.refresh(row)
     return _build_response(db, row)

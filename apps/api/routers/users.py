@@ -12,6 +12,8 @@ from ..tasks.email_tasks import send_invite_email
 from ..tasks.celery_app import send_task_safe
 from ..config import settings
 from ..services import s3_service
+from ..services.permissions import is_staff_user
+from ..models.instance_settings import InstanceSettings
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -52,30 +54,68 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
+def require_staff_or_admin(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> User:
+    """Any staff member (email domain on the admin-configured allowlist, see
+    is_staff_user) or superadmin - for capabilities regular client accounts
+    shouldn't reach (e.g. browsing/activating Ayon projects from the New
+    Project modal) but that don't need full admin rights either."""
+    if current_user.is_superadmin or is_staff_user(db, current_user):
+        return current_user
+    raise HTTPException(status_code=403, detail="Staff access required")
+
 @router.post("/invite", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED)
 def invite_user(body: InviteRequest, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     if get_user_by_email(db, body.email):
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     # Generate invite token
     invite_token = secrets.token_urlsafe(48)
     invite_expires = datetime.now(timezone.utc) + timedelta(days=7)
-    
-    user = User(
-        email=body.email,
-        name=body.name,
-        status=UserStatus.pending_invite,
-        invite_token=invite_token,
-        invite_token_expires_at=invite_expires,
-    )
-    db.add(user)
+
+    # email is a raw unique DB constraint, not scoped to deleted_at IS NULL -
+    # a previously-deleted account still holds this email's slot, so a plain
+    # insert here would violate it and crash. Reactivate that row instead of
+    # trying to create a duplicate (see the matching fix on
+    # POST /admin/users for the direct-create path).
+    user = db.query(User).filter(
+        User.email == body.email, User.deleted_at.is_not(None)
+    ).order_by(User.deleted_at.desc()).first()
+    if user:
+        user.deleted_at = None
+        user.name = body.name
+        user.status = UserStatus.pending_invite
+        user.invite_token = invite_token
+        user.invite_token_expires_at = invite_expires
+        user.is_superadmin = False  # don't silently resurrect prior admin rights
+        user.password_hash = None  # must set a new one via the invite flow
+        user.must_change_password = False
+        user.token_version += 1  # invalidate any tokens from its previous life
+    else:
+        user = User(
+            email=body.email,
+            name=body.name,
+            status=UserStatus.pending_invite,
+            invite_token=invite_token,
+            invite_token_expires_at=invite_expires,
+        )
+        db.add(user)
     db.commit()
     db.refresh(user)
     
     # Send invite email
     invite_url = f"{settings.frontend_url}/invite/{invite_token}"
-    send_task_safe(send_invite_email, user.email, current_user.name or "Admin", "FreeFrame", invite_url)
-    
+    instance_row = db.query(InstanceSettings).first()
+    site_name = (instance_row.workspace_name if instance_row else None) or "FreeFrame"
+    send_task_safe(
+        send_invite_email,
+        user.email,
+        current_user.name or "Admin",
+        site_name,
+        invite_url,
+        custom_message=body.custom_message,
+        recipient_name=user.name,
+    )
+
     return user
 
 @router.patch("/{user_id}", response_model=UserResponse)

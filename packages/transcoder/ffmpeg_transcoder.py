@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -72,6 +73,57 @@ class FFmpegTranscoder(BaseTranscoder):
                 f"{label} exited {result.returncode}: {stderr or 'no stderr output'}"
             )
         return result.stdout
+
+    @staticmethod
+    def _write_master_playlist(hls_dir: Path, qualities: list[str], quality_map: dict) -> None:
+        """Overwrite hls_dir/master.m3u8 with #EXT-X-STREAM-INF entries built
+        from what we asked ffmpeg to encode (rendition index -> quality),
+        rather than trusting ffmpeg's own master playlist output - see the
+        call site for why."""
+        lines = ["#EXTM3U", "#EXT-X-VERSION:6"]
+        for i, q in enumerate(qualities):
+            width, height = quality_map[q][0].split(":")
+            variant_dir = hls_dir / str(i)
+
+            total_bytes = sum(f.stat().st_size for f in variant_dir.glob("*.ts"))
+            total_seconds = 0.0
+            playlist_path = variant_dir / "playlist.m3u8"
+            if playlist_path.exists():
+                for line in playlist_path.read_text().splitlines():
+                    if line.startswith("#EXTINF:"):
+                        total_seconds += float(line[len("#EXTINF:"):].split(",")[0])
+            bandwidth = int((total_bytes * 8) / total_seconds) if total_seconds > 0 else 500_000
+
+            lines.append(
+                f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={bandwidth},RESOLUTION={width}x{height}"
+            )
+            lines.append(f"{i}/playlist.m3u8")
+        (hls_dir / "master.m3u8").write_text("\n".join(lines) + "\n")
+
+    @staticmethod
+    def _fix_rendition_target_durations(hls_dir: Path, qualities: list[str]) -> None:
+        """Per the HLS spec, EXT-X-TARGETDURATION must be a positive integer
+        (the ceiling of the longest segment). ffmpeg's HLS muxer writes it as
+        the *rounded* longest segment duration instead - for any source clip
+        under ~1.5s (the whole thing fits in one #EXTINF), that rounds to 0.
+        HLS.js/browsers treat TARGETDURATION:0 as malformed and refuse to
+        play the rendition, even though every segment file itself is fine -
+        same root cause as _write_master_playlist's fixup above (see its
+        call site), just surfacing on the per-rendition playlists instead of
+        the master one. Only ever raises the value, never lowers it, so
+        normal-length clips (already >= 1) are untouched."""
+        for i in range(len(qualities)):
+            playlist_path = hls_dir / str(i) / "playlist.m3u8"
+            if not playlist_path.exists():
+                continue
+            text = playlist_path.read_text()
+            fixed = re.sub(
+                r"#EXT-X-TARGETDURATION:(\d+)",
+                lambda m: "#EXT-X-TARGETDURATION:" + str(max(1, int(m.group(1)))),
+                text,
+            )
+            if fixed != text:
+                playlist_path.write_text(fixed)
 
     async def get_video_metadata(self, s3_key: str) -> VideoMetadata:
         """Get video metadata using streaming (no full download)."""
@@ -180,7 +232,16 @@ class FFmpegTranscoder(BaseTranscoder):
                     "-force_key_frames", "expr:gte(t,n_forced*2)",
                 ]
 
-            segment_dir = hls_dir / "%v"
+            # .as_posix(), not str(): ffmpeg's HLS muxer writes the master
+            # playlist's per-quality variant references (e.g. "0/playlist.m3u8")
+            # by reusing whatever separator convention the *command-line* path
+            # arguments used - str(Path) is OS-native, so on Windows this
+            # silently baked literal backslashes ("0\playlist.m3u8") into the
+            # master.m3u8 content itself. Browsers/HLS.js parse "\" as part of
+            # the filename, not a path separator, so playback failed even
+            # though every individual file uploaded fine. ffmpeg accepts "/"
+            # in paths on Windows too, so this is safe for the actual file I/O
+            # as well as the muxer's internal references.
             ffmpeg_cmd += [
                 "-f", "hls",
                 "-hls_time", "2",
@@ -192,8 +253,8 @@ class FFmpegTranscoder(BaseTranscoder):
                     f"v:{i},a:{i}" if has_audio else f"v:{i}"
                     for i in range(len(qualities))
                 ),
-                "-hls_segment_filename", str(hls_dir / "%v" / "seg_%03d.ts"),
-                str(hls_dir / "%v" / "playlist.m3u8"),
+                "-hls_segment_filename", (hls_dir / "%v" / "seg_%03d.ts").as_posix(),
+                (hls_dir / "%v" / "playlist.m3u8").as_posix(),
             ]
 
             # Create per-quality directories
@@ -203,11 +264,31 @@ class FFmpegTranscoder(BaseTranscoder):
             # Timeout scales with expected duration - 4 hours for very large files
             self._run(ffmpeg_cmd, timeout=14400, label="ffmpeg")
 
+            # ffmpeg's own HLS muxer can silently write master.m3u8 with just
+            # the bare "#EXTM3U/#EXT-X-VERSION" header and none of the
+            # #EXT-X-STREAM-INF variant lines - reproduced locally with any
+            # sub-1-second source clip (TARGETDURATION:0 on the rendition
+            # playlists is the tell). ffmpeg still exits 0 and every rendition
+            # playlist/segment is written correctly, so this was silently
+            # invisible on the backend - it only surfaced as HLS.js's fatal
+            # networkError in the browser, since a master playlist with zero
+            # variants has nothing for it to load. Rewriting master.m3u8
+            # ourselves from what we know we asked ffmpeg to produce sidesteps
+            # that muxer bug for short clips without changing behavior for
+            # normal-length ones.
+            self._write_master_playlist(hls_dir, qualities, QUALITY_MAP)
+            self._fix_rendition_target_durations(hls_dir, qualities)
+
             # 4. Upload HLS files to S3
             uploaded_keys = []
             for f in hls_dir.rglob("*"):
                 if f.is_file():
-                    relative = f.relative_to(hls_dir)
+                    # S3 keys always use "/" regardless of host OS; Path.__str__ uses
+                    # the native separator, so on Windows this silently produced keys
+                    # like ".../0\playlist.m3u8" - S3/MinIO reject those outright
+                    # (XMinioInvalidObjectName), which made every HLS video transcode
+                    # fail on Windows with no output beyond the raw upload error.
+                    relative = f.relative_to(hls_dir).as_posix()
                     s3_key = f"{job.output_s3_prefix}/{relative}"
                     content_type, cache_control = self._get_content_type(f.name)
                     self.s3.upload_file(
@@ -217,10 +298,24 @@ class FFmpegTranscoder(BaseTranscoder):
                     uploaded_keys.append(s3_key)
 
             # 5. Generate and upload thumbnail (using streaming URL)
+            #
+            # -ss <offset> -frames:v 1, not "-vf fps=0.1 -frames:v 1": fps=0.1
+            # samples one frame every 10s, so any clip under ~10s (like this
+            # 4.2s test delivery) produced zero output frames - "no thumbnail",
+            # not an error, just a silently missing image. Seeking directly to
+            # a fraction of the real (probed) duration works at any length.
+            #
+            # -pix_fmt yuvj420p: without it, mjpeg's frame-threaded encoder
+            # flatly refuses ambiguous-range yuv420p input ("Non full-range
+            # YUV is non-standard" -> "ff_frame_thread_encoder_init failed" ->
+            # exit -22 / EINVAL), which previously failed the *entire* asset
+            # (HLS included) even though the actual video transcode succeeded.
+            duration = (meta.duration_seconds if meta else 0) or 0
+            seek_offset = min(1.0, duration / 2) if duration > 0 else 0
             thumb_path = work_dir / "thumb_0001.jpg"
             thumb_cmd = [
-                "ffmpeg", "-y", "-i", input_url,
-                "-vf", "fps=0.1", "-q:v", "2", "-frames:v", "1",
+                "ffmpeg", "-y", "-ss", str(seek_offset), "-i", input_url,
+                "-pix_fmt", "yuvj420p", "-q:v", "2", "-frames:v", "1",
                 str(work_dir / "thumb_%04d.jpg"),
             ]
             self._run(thumb_cmd, label="ffmpeg")

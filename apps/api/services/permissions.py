@@ -5,8 +5,23 @@ from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.asset import Asset
 from ..models.folder import Folder
+from ..models.instance_settings import InstanceSettings
 from ..models.share import AssetShare, ShareLink, ShareLinkItem, SharePermission
 from ..services.redis_service import verify_share_session
+
+
+# ── Staff vs. client accounts ───────────────────────────────────────────────────
+# Not yet enforced anywhere (no CLIENT_SHARE-tagged content exists in FreeFrame
+# yet - NAS Watcher's nas_root currently points directly at a CLIENT_SHARE
+# folder, so every ingested asset already is client-facing). Kept here so the
+# eventual CLIENT_SHARE/COMP_SHARE asset filter has one place to call.
+
+def is_staff_user(db: Session, user: User) -> bool:
+    """Whether user's email domain is on the admin-configured staff allowlist."""
+    domain = user.email.rsplit("@", 1)[-1].lower()
+    row = db.query(InstanceSettings).first()
+    staff_domains = (row.staff_email_domains if row else None) or ["mnm.local", "methodnmadness.com"]
+    return domain in {d.lower() for d in staff_domains}
 
 
 # ── Project-level ──────────────────────────────────────────────────────────────
@@ -24,8 +39,10 @@ def require_project_role(
     project_id: uuid.UUID,
     user: User,
     minimum_role: ProjectRole,
-) -> ProjectMember:
+) -> ProjectMember | None:
     """Require the user to have at least `minimum_role` on the project.
+    Superadmins always pass (returning None - they aren't necessarily an
+    actual ProjectMember row, so there's no role to hand back).
 
     Role hierarchy (descending): owner > editor > reviewer > viewer
     """
@@ -35,6 +52,8 @@ def require_project_role(
         ProjectRole.reviewer: 2,
         ProjectRole.viewer: 1,
     }
+    if user.is_superadmin:
+        return None
     member = get_project_member(db, project_id, user.id)
     if not member:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
@@ -59,6 +78,10 @@ def is_public_project(db: Session, project_id: uuid.UUID) -> bool:
 
 def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     """Check if user can access the asset via any path."""
+    # 0. Superadmin - full access regardless of membership
+    if user.is_superadmin:
+        return True
+
     # 1. Asset creator
     if asset.created_by == user.id:
         return True
