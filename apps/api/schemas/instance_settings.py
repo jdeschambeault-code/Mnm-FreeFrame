@@ -7,6 +7,10 @@ class InstanceSettingsUpdate(BaseModel):
     staff_email_domains: list[str] | None = None
     workspace_name: str | None = Field(default=None, min_length=1, max_length=255)
     ayon_relay_paused: bool | None = None
+    # Client Sharing rules - see routers/share.py's _apply_client_sharing_rules.
+    client_share_expiry_days: int | None = Field(default=None, ge=1, le=365)
+    client_share_expiry_enforced: bool | None = None
+    client_share_watermark_enforced: bool | None = None
 
 
 class InstanceSettingsResponse(BaseModel):
@@ -17,3 +21,6 @@ class InstanceSettingsResponse(BaseModel):
     staff_email_domains: list[str] = []
     workspace_name: str = "FreeFrame"
     ayon_relay_paused: bool = False
+    client_share_expiry_days: int = 7
+    client_share_expiry_enforced: bool = True
+    client_share_watermark_enforced: bool = True

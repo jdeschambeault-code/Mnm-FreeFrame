@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import useSWR from 'swr'
 import {
   X,
   Copy,
@@ -22,12 +23,43 @@ import {
   Clock,
   Droplets,
   LayoutGrid,
+  Lock,
 } from 'lucide-react'
 import * as Switch from '@radix-ui/react-switch'
 import { cn, copyToClipboard, endOfDayISO } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import type { AssetResponse, Folder, ShareLink, ShareLinkAppearance } from '@/types'
+import { useAuthStore } from '@/stores/auth-store'
+import type { AssetResponse, Folder, ShareLink, ShareLinkAppearance, InstanceSettings } from '@/types'
+
+// ─── Client Sharing lock (Settings > Admin > Client Sharing) ────────────────
+// Mirrors the server-side enforcement in routers/share.py's
+// _apply_client_sharing_rules / _strip_client_sharing_locks - purely a UI
+// reflection of it (the backend enforces regardless of what this computes),
+// so a client sees the field as locked instead of a toggle that silently has
+// no effect.
+
+interface ClientSharingLock {
+  isClient: boolean
+  expiryEnforced: boolean
+  expiryDays: number
+  watermarkEnforced: boolean
+}
+
+function useClientSharingLock(): ClientSharingLock {
+  const { user } = useAuthStore()
+  const { data } = useSWR<InstanceSettings>('/instance/settings', () => api.get<InstanceSettings>('/instance/settings'))
+  const isStaff = !!(
+    user?.is_superadmin ||
+    (user?.email && (data?.staff_email_domains ?? []).includes(user.email.split('@')[1]?.toLowerCase() ?? ''))
+  )
+  return {
+    isClient: !isStaff,
+    expiryEnforced: data?.client_share_expiry_enforced ?? true,
+    expiryDays: data?.client_share_expiry_days ?? 7,
+    watermarkEnforced: data?.client_share_watermark_enforced ?? true,
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -276,18 +308,21 @@ interface ConfigurePhaseProps {
   onBack: () => void
   onCreate: (config: ShareConfig) => void
   creating: boolean
+  lock: ClientSharingLock
 }
 
-function ConfigurePhase({ defaultTitle, onBack, onCreate, creating }: ConfigurePhaseProps) {
+function ConfigurePhase({ defaultTitle, onBack, onCreate, creating, lock }: ConfigurePhaseProps) {
   const [title, setTitle] = React.useState(defaultTitle)
   const [allowComments, setAllowComments] = React.useState(false)
   const [allowDownloads, setAllowDownloads] = React.useState(false)
   const [passphrase, setPassphrase] = React.useState(false)
   const [passphraseValue, setPassphraseValue] = React.useState('')
   const [showPassphraseInput, setShowPassphraseInput] = React.useState(false)
-  const [watermark, setWatermark] = React.useState(false)
+  const [watermark, setWatermark] = React.useState(lock.isClient && lock.watermarkEnforced)
   const [expiresAt, setExpiresAt] = React.useState('')
   const [visibility, setVisibility] = React.useState<'public' | 'secure'>('public')
+  const watermarkLocked = lock.isClient && lock.watermarkEnforced
+  const expiryLocked = lock.isClient && lock.expiryEnforced
 
   function handleCreate() {
     onCreate({
@@ -423,19 +458,25 @@ function ConfigurePhase({ defaultTitle, onBack, onCreate, creating }: ConfigureP
               <Clock className="h-4 w-4 text-text-tertiary" />
               <span className="text-sm text-text-primary">Expiration date</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="date"
-                value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
-                className="w-[120px] rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent [color-scheme:dark]"
-              />
-              {expiresAt && (
-                <button onClick={() => setExpiresAt('')} className="text-text-tertiary hover:text-text-primary">
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
+            {expiryLocked ? (
+              <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                <Lock className="h-3 w-3" /> {lock.expiryDays} days from sharing
+              </span>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                  className="w-[120px] rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent [color-scheme:dark]"
+                />
+                {expiresAt && (
+                  <button onClick={() => setExpiresAt('')} className="text-text-tertiary hover:text-text-primary">
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Watermark */}
@@ -444,13 +485,19 @@ function ConfigurePhase({ defaultTitle, onBack, onCreate, creating }: ConfigureP
               <Droplets className="h-4 w-4 text-text-tertiary" />
               <span className="text-sm text-text-primary">Watermark</span>
             </div>
-            <Switch.Root
-              checked={watermark}
-              onCheckedChange={setWatermark}
-              className="w-9 h-5 rounded-full relative bg-bg-tertiary border border-border data-[state=checked]:bg-accent transition-colors"
-            >
-              <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
-            </Switch.Root>
+            {watermarkLocked ? (
+              <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                <Lock className="h-3 w-3" /> Always on
+              </span>
+            ) : (
+              <Switch.Root
+                checked={watermark}
+                onCheckedChange={setWatermark}
+                className="w-9 h-5 rounded-full relative bg-bg-tertiary border border-border data-[state=checked]:bg-accent transition-colors"
+              >
+                <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
+              </Switch.Root>
+            )}
           </div>
         </div>
       </div>
@@ -567,9 +614,12 @@ interface LinkCreatedPhaseProps {
   onSelectResult?: (result: CreatedShareResult) => void
   onDone: () => void
   onAdvancedSettings?: (token: string) => void
+  lock: ClientSharingLock
 }
 
-function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvancedSettings }: LinkCreatedPhaseProps) {
+function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvancedSettings, lock }: LinkCreatedPhaseProps) {
+  const watermarkLocked = lock.isClient && lock.watermarkEnforced
+  const expiryLocked = lock.isClient && lock.expiryEnforced
   const [title, setTitle] = React.useState(result.title)
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [savingTitle, setSavingTitle] = React.useState(false)
@@ -903,19 +953,25 @@ function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvanc
                   <Clock className="h-4 w-4 text-text-tertiary" />
                   <span className="text-sm text-text-primary">Expiration date</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="date"
-                    value={expiresAt}
-                    onChange={(e) => { setExpiresAt(e.target.value); patchLink({ expires_at: e.target.value ? new Date(e.target.value).toISOString() : null }) }}
-                    className="w-[120px] rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent [color-scheme:dark]"
-                  />
-                  {expiresAt && (
-                    <button onClick={() => { setExpiresAt(''); patchLink({ expires_at: null }) }} className="text-text-tertiary hover:text-text-primary">
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
+                {expiryLocked ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                    <Lock className="h-3 w-3" /> {lock.expiryDays} days from sharing
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={expiresAt}
+                      onChange={(e) => { setExpiresAt(e.target.value); patchLink({ expires_at: e.target.value ? new Date(e.target.value).toISOString() : null }) }}
+                      className="w-[120px] rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent [color-scheme:dark]"
+                    />
+                    {expiresAt && (
+                      <button onClick={() => { setExpiresAt(''); patchLink({ expires_at: null }) }} className="text-text-tertiary hover:text-text-primary">
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Watermark */}
@@ -924,13 +980,19 @@ function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvanc
                   <Droplets className="h-4 w-4 text-text-tertiary" />
                   <span className="text-sm text-text-primary">Watermark</span>
                 </div>
-                <Switch.Root
-                  checked={watermark}
-                  onCheckedChange={(v) => { setWatermark(v); patchLink({ show_watermark: v }) }}
-                  className="w-9 h-5 rounded-full relative bg-bg-tertiary border border-border data-[state=checked]:bg-accent transition-colors"
-                >
-                  <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
-                </Switch.Root>
+                {watermarkLocked ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                    <Lock className="h-3 w-3" /> Always on
+                  </span>
+                ) : (
+                  <Switch.Root
+                    checked={watermark}
+                    onCheckedChange={(v) => { setWatermark(v); patchLink({ show_watermark: v }) }}
+                    className="w-9 h-5 rounded-full relative bg-bg-tertiary border border-border data-[state=checked]:bg-accent transition-colors"
+                  >
+                    <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
+                  </Switch.Root>
+                )}
               </div>
             </div>
           </>
@@ -977,6 +1039,7 @@ export function ShareCreateDialog({
 }: ShareCreateDialogProps) {
   type Phase = 'selection' | 'configure' | 'result'
 
+  const lock = useClientSharingLock()
   const [selectedItems, setSelectedItems] = React.useState<Map<string, SelectedItem>>(new Map())
   const [phase, setPhase] = React.useState<Phase>(initialResult ? 'result' : 'selection')
   const [configureDefaultTitle, setConfigureDefaultTitle] = React.useState('')
@@ -1071,6 +1134,8 @@ export function ShareCreateDialog({
       let shareLink: ShareLink
       let itemType: 'asset' | 'folder' = 'folder'
       let thumbUrl: string | null = null
+      let assetId: string | null = null
+      let folderId: string | null = null
 
       // Check if a specific item is selected (single asset or single folder)
       const items = Array.from(selectedItems.values())
@@ -1100,14 +1165,17 @@ export function ShareCreateDialog({
           })
           itemType = 'asset'
           thumbUrl = singleItem.thumbnailUrl
+          assetId = singleItem.id
         } else if (singleItem?.type === 'folder') {
           shareLink = await api.post<ShareLink>(`/folders/${singleItem.id}/share`, {
             title: config.title,
           })
+          folderId = singleItem.id
         } else if (currentFolderId) {
           shareLink = await api.post<ShareLink>(`/folders/${currentFolderId}/share`, {
             title: config.title,
           })
+          folderId = currentFolderId
         } else {
           shareLink = await api.post<ShareLink>(`/projects/${projectId}/share`, {
             title: config.title,
@@ -1126,8 +1194,23 @@ export function ShareCreateDialog({
         await api.patch(`/share/${shareLink.token}`, patches)
       }
 
+      // Show the created link (URL + copy button + settings) instead of just
+      // closing — this phase (LinkCreatedPhase) already existed but was never
+      // reached: nothing here used to populate createdResult/phase, so
+      // "Create" silently closed the dialog without ever surfacing the link.
+      const created: CreatedShareResult = {
+        token: shareLink.token,
+        title: config.title,
+        itemType,
+        thumbnailUrl: thumbUrl,
+        assetId,
+        folderId,
+        projectId,
+      }
+      setCreatedResult(created)
+      setAllCreatedResults((prev) => [...prev, created])
+      setPhase('result')
       onShareCreated()
-      onOpenChange(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create share link')
     } finally {
@@ -1170,6 +1253,7 @@ export function ShareCreateDialog({
               onSelectResult={(r) => setCreatedResult(r)}
               onDone={handleDone}
               onAdvancedSettings={onAdvancedSettings}
+              lock={lock}
             />
           ) : phase === 'configure' ? (
             <ConfigurePhase
@@ -1177,6 +1261,7 @@ export function ShareCreateDialog({
               onBack={preselectedItem ? () => onOpenChange(false) : () => setPhase('selection')}
               onCreate={handleCreate}
               creating={creating}
+              lock={lock}
             />
           ) : (
             <SelectionPhase

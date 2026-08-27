@@ -32,6 +32,7 @@ from ..schemas.admin import (
     ProjectPurgePreviewResponse,
     ProjectPurgeNowRequest,
     ProjectPurgeNowResponse,
+    AdminShareLinkItem,
 )
 from ..services.email_service import email_service, mail_is_configured
 from ..schemas.ayon import AyonProjectSummary, ActivateAyonProjectRequest
@@ -556,4 +557,77 @@ def send_test_email(body: SendTestEmailRequest, current_user: User = Depends(req
             status_code=502,
             detail="Send failed - check the mail provider credentials and server logs for the underlying error.",
         )
+
+
+# ── Share Links: Settings > Admin > Share Links ─────────────────────────────
+# Instance-wide oversight - every share link across every project, so an admin
+# can spot and cancel one without having to be a member of that project (see
+# routers/share.py's DELETE /share/{token}, which already superadmin-bypasses
+# require_project_role).
+
+@router.get("/share-links", response_model=list[AdminShareLinkItem])
+def list_all_share_links(current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from ..models.share import ShareLink
+    from ..models.asset import Asset
+    from ..models.folder import Folder
+    from ..services.permissions import is_staff_user
+
+    links = (
+        db.query(ShareLink)
+        .filter(ShareLink.deleted_at.is_(None))
+        .order_by(ShareLink.created_at.desc())
+        .all()
+    )
+    if not links:
+        return []
+
+    creator_ids = {l.created_by for l in links}
+    creators = {u.id: u for u in db.query(User).filter(User.id.in_(creator_ids)).all()}
+
+    asset_ids = {l.asset_id for l in links if l.asset_id}
+    folder_ids = {l.folder_id for l in links if l.folder_id}
+    assets = {a.id: a for a in db.query(Asset).filter(Asset.id.in_(asset_ids)).all()} if asset_ids else {}
+    folders = {f.id: f for f in db.query(Folder).filter(Folder.id.in_(folder_ids)).all()} if folder_ids else {}
+
+    project_ids = set()
+    for l in links:
+        if l.project_id:
+            project_ids.add(l.project_id)
+        elif l.asset_id and l.asset_id in assets:
+            project_ids.add(assets[l.asset_id].project_id)
+        elif l.folder_id and l.folder_id in folders:
+            project_ids.add(folders[l.folder_id].project_id)
+    projects = {p.id: p for p in db.query(Project).filter(Project.id.in_(project_ids)).all()} if project_ids else {}
+
+    result: list[AdminShareLinkItem] = []
+    for l in links:
+        if l.asset_id and l.asset_id in assets:
+            share_type, project_id = "asset", assets[l.asset_id].project_id
+        elif l.folder_id and l.folder_id in folders:
+            share_type, project_id = "folder", folders[l.folder_id].project_id
+        elif l.project_id:
+            share_type, project_id = "project", l.project_id
+        else:
+            continue  # dangling link (target deleted out from under it) - not shown
+        project = projects.get(project_id)
+        creator = creators.get(l.created_by)
+        result.append(AdminShareLinkItem(
+            id=l.id,
+            token=l.token,
+            title=l.title,
+            share_type=share_type,
+            project_id=project_id,
+            project_name=project.name if project else "(deleted project)",
+            created_by_name=creator.name if creator else "(deleted user)",
+            created_by_email=creator.email if creator else "",
+            is_client=(not is_staff_user(db, creator)) if creator and not creator.is_superadmin else False,
+            is_enabled=l.is_enabled,
+            visibility=l.visibility,
+            permission=l.permission.value if hasattr(l.permission, "value") else l.permission,
+            allow_download=l.allow_download,
+            show_watermark=l.show_watermark,
+            expires_at=l.expires_at.isoformat() if l.expires_at else None,
+            created_at=l.created_at.isoformat(),
+        ))
+    return result
     return {"status": "sent", "to": body.to_email}

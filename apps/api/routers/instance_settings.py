@@ -41,6 +41,9 @@ def _build_response(db: Session, row: InstanceSettings) -> InstanceSettingsRespo
         staff_email_domains=row.staff_email_domains or [],
         workspace_name=row.workspace_name or "FreeFrame",
         ayon_relay_paused=row.ayon_relay_paused,
+        client_share_expiry_days=row.client_share_expiry_days,
+        client_share_expiry_enforced=row.client_share_expiry_enforced,
+        client_share_watermark_enforced=row.client_share_watermark_enforced,
     )
 
 
@@ -60,6 +63,9 @@ def get_instance_settings(
         staff_email_domains=(row.staff_email_domains or []) if row else ["mnm.local", "methodnmadness.com"],
         workspace_name=(row.workspace_name or "FreeFrame") if row else "FreeFrame",
         ayon_relay_paused=row.ayon_relay_paused if row else False,
+        client_share_expiry_days=row.client_share_expiry_days if row else 7,
+        client_share_expiry_enforced=row.client_share_expiry_enforced if row else True,
+        client_share_watermark_enforced=row.client_share_watermark_enforced if row else True,
         storage_used_bytes=storage_service.instance_storage_used_bytes(db),
     )
 
@@ -80,6 +86,12 @@ def update_instance_settings(
         row.workspace_name = body.workspace_name.strip()
     if body.ayon_relay_paused is not None:
         row.ayon_relay_paused = body.ayon_relay_paused
+    if body.client_share_expiry_days is not None:
+        row.client_share_expiry_days = body.client_share_expiry_days
+    if body.client_share_expiry_enforced is not None:
+        row.client_share_expiry_enforced = body.client_share_expiry_enforced
+    if body.client_share_watermark_enforced is not None:
+        row.client_share_watermark_enforced = body.client_share_watermark_enforced
     db.commit()
     db.refresh(row)
     return _build_response(db, row)

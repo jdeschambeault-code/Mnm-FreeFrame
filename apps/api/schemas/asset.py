@@ -31,6 +31,11 @@ class AssetVersionResponse(BaseModel):
     created_at: datetime
     files: list[MediaFileResponse] = []
     ayon_version_id: Optional[str] = None
+    # Non-deleted comment count on THIS version specifically (not the asset as a
+    # whole) - lets the Version Switcher flag older versions that still carry
+    # comments, since comments are version-scoped and silently invisible once
+    # the viewer defaults to the latest version.
+    comment_count: int = 0
     model_config = {"from_attributes": True}
 
 class AssetResponse(BaseModel):

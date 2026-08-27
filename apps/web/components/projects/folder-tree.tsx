@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import {
   ChevronRight,
   FolderOpen,
@@ -8,11 +8,12 @@ import {
   Plus,
   Trash2,
   MoreHorizontal,
-  Pencil,
   FolderPlus,
   Trash,
+  Download,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useDownloadStore } from '@/stores/download-store'
 import type { FolderTreeNode } from '@/types'
 
 interface FolderTreeProps {
@@ -23,7 +24,6 @@ interface FolderTreeProps {
   onSelectFolder: (folderId: string | null) => void
   onShowTrash: () => void
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>
-  onRenameFolder: (folderId: string, name: string) => Promise<void>
   onDeleteFolder: (folderId: string) => Promise<void>
   // Drag-drop targets
   onDropItems?: (targetFolderId: string | null, assetIds: string[], folderIds: string[]) => void
@@ -35,9 +35,10 @@ interface FolderNodeProps {
   currentFolderId: string | null
   onSelectFolder: (folderId: string | null) => void
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>
-  onRenameFolder: (folderId: string, name: string) => Promise<void>
   onDeleteFolder: (folderId: string) => Promise<void>
   onDropItems?: (targetFolderId: string | null, assetIds: string[], folderIds: string[]) => void
+  // Incremented by an ancestor's shift+click to cascade "expand all" downward.
+  expandSignal?: number
 }
 
 function FolderNode({
@@ -46,30 +47,43 @@ function FolderNode({
   currentFolderId,
   onSelectFolder,
   onCreateFolder,
-  onRenameFolder,
   onDeleteFolder,
   onDropItems,
+  expandSignal,
 }: FolderNodeProps) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [renameName, setRenameName] = useState(node.name)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [childExpandSignal, setChildExpandSignal] = useState(0)
+  const lastAppliedSignal = useRef(0)
+  const startDownload = useDownloadStore((s) => s.startDownload)
   const isActive = currentFolderId === node.id
 
   const hasChildren = node.children.length > 0
 
-  const handleClick = useCallback(() => {
-    onSelectFolder(node.id)
-    if (hasChildren) setExpanded((p) => !p)
-  }, [node.id, hasChildren, onSelectFolder])
-
-  const handleRename = useCallback(async () => {
-    if (renameName.trim() && renameName !== node.name) {
-      await onRenameFolder(node.id, renameName.trim())
+  // Cascade an ancestor's shift+click ("expand all") down through the tree:
+  // expand self, then bump our own signal so children do the same.
+  useEffect(() => {
+    if (expandSignal && expandSignal !== lastAppliedSignal.current) {
+      lastAppliedSignal.current = expandSignal
+      setExpanded(true)
+      setChildExpandSignal((s) => s + 1)
     }
-    setRenaming(false)
-  }, [renameName, node.id, node.name, onRenameFolder])
+  }, [expandSignal])
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      onSelectFolder(node.id)
+      if (!hasChildren) return
+      if (e.shiftKey) {
+        setExpanded(true)
+        setChildExpandSignal((s) => s + 1)
+      } else {
+        setExpanded((p) => !p)
+      }
+    },
+    [node.id, hasChildren, onSelectFolder],
+  )
 
   // Drag-drop target
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -115,7 +129,10 @@ function FolderNode({
         }}
       >
         {/* Expand chevron */}
-        <span className={cn('shrink-0 transition-transform', expanded && 'rotate-90')}>
+        <span
+          className={cn('shrink-0 transition-transform', expanded && 'rotate-90')}
+          title={hasChildren ? 'Click to expand · Shift+click to expand all subfolders' : undefined}
+        >
           {hasChildren ? (
             <ChevronRight className="h-3 w-3" />
           ) : (
@@ -131,25 +148,10 @@ function FolderNode({
         )}
 
         {/* Name */}
-        {renaming ? (
-          <input
-            className="flex-1 min-w-0 bg-transparent border-b border-accent outline-none text-[13px] text-text-primary px-0.5"
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            onBlur={handleRename}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleRename()
-              if (e.key === 'Escape') setRenaming(false)
-            }}
-            autoFocus
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="truncate flex-1 min-w-0">{node.name}</span>
-        )}
+        <span className="truncate flex-1 min-w-0">{node.name}</span>
 
         {/* Item count */}
-        {node.item_count > 0 && !renaming && (
+        {node.item_count > 0 && (
           <span className="text-[10px] text-text-tertiary shrink-0">{node.item_count}</span>
         )}
 
@@ -172,11 +174,10 @@ function FolderNode({
             className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             onClick={() => {
               setMenuOpen(false)
-              setRenaming(true)
-              setRenameName(node.name)
+              startDownload(node.id, node.name)
             }}
           >
-            <Pencil className="h-3 w-3" /> Rename
+            <Download className="h-3 w-3" /> Download
           </button>
           <button
             className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -213,9 +214,9 @@ function FolderNode({
               currentFolderId={currentFolderId}
               onSelectFolder={onSelectFolder}
               onCreateFolder={onCreateFolder}
-              onRenameFolder={onRenameFolder}
               onDeleteFolder={onDeleteFolder}
               onDropItems={onDropItems}
+              expandSignal={childExpandSignal}
             />
           ))}
         </div>
@@ -232,7 +233,6 @@ export function FolderTree({
   onSelectFolder,
   onShowTrash,
   onCreateFolder,
-  onRenameFolder,
   onDeleteFolder,
   onDropItems,
 }: FolderTreeProps) {
@@ -277,7 +277,6 @@ export function FolderTree({
           currentFolderId={currentFolderId}
           onSelectFolder={onSelectFolder}
           onCreateFolder={onCreateFolder}
-          onRenameFolder={onRenameFolder}
           onDeleteFolder={onDeleteFolder}
           onDropItems={onDropItems}
         />

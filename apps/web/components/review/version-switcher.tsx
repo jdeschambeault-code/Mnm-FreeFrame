@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { AlertCircle, Loader2, CheckCircle2, ChevronDown } from 'lucide-react'
+import { AlertCircle, Loader2, CheckCircle2, ChevronDown, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useReviewStore } from '@/stores/review-store'
 import type { AssetVersion, AssetVersionStatus } from '@/types'
@@ -58,6 +58,16 @@ export function VersionSwitcher({ versions, className }: VersionSwitcherProps) {
       ? versionStatusConfig[latestStatus]
       : null
 
+  // Comments are version-scoped, so landing on a version with zero comments while
+  // an OTHER version still carries some can look like "the comments disappeared"
+  // rather than "you're viewing a different version". Surface that on the
+  // always-visible trigger, not just inside the dropdown.
+  const currentVersionId = currentVersion?.id ?? latest.id
+  const currentHasComments = (sorted.find((v) => v.id === currentVersionId)?.comment_count ?? 0) > 0
+  const otherVersionsWithComments = sorted.filter(
+    (v) => v.id !== currentVersionId && (v.comment_count ?? 0) > 0,
+  )
+
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
       <span className="text-xs text-text-tertiary shrink-0">Version:</span>
@@ -65,6 +75,18 @@ export function VersionSwitcher({ versions, className }: VersionSwitcherProps) {
         <DropdownMenu.Trigger asChild>
           <button className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors outline-none">
             <span>v{currentVersion?.version_number ?? latest.version_number}</span>
+            {!currentHasComments && otherVersionsWithComments.length > 0 && (
+              <span
+                data-testid="other-versions-comments-hint"
+                className="inline-flex items-center gap-1 text-[11px] text-white/90"
+                title={`No comments on this version — ${otherVersionsWithComments
+                  .map((v) => `v${v.version_number} has ${v.comment_count}`)
+                  .join(', ')}`}
+              >
+                <MessageSquare className="h-2.5 w-2.5" />
+                {otherVersionsWithComments.reduce((sum, v) => sum + (v.comment_count ?? 0), 0)} on other versions
+              </span>
+            )}
             {inFlightCfg && (
               <span
                 data-testid="version-status-indicator"
@@ -104,7 +126,18 @@ export function VersionSwitcher({ versions, className }: VersionSwitcherProps) {
                       isDisabled && 'opacity-50 cursor-not-allowed',
                     )}
                   >
-                    <span>v{version.version_number}</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      v{version.version_number}
+                      {(version.comment_count ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[11px] text-text-tertiary"
+                          title={`${version.comment_count} comment${version.comment_count === 1 ? '' : 's'}`}
+                        >
+                          <MessageSquare className="h-2.5 w-2.5" />
+                          {version.comment_count}
+                        </span>
+                      )}
+                    </span>
                     <span
                       className={cn('inline-flex items-center gap-1 text-[11px]', statusCfg.className)}
                       title={statusCfg.label}

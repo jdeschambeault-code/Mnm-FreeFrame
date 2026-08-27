@@ -12,6 +12,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
+from ..models.comment import Comment
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
@@ -328,9 +329,19 @@ def list_asset_versions(
     for f in all_files:
         files_by_version.setdefault(f.version_id, []).append(f)
 
+    comment_counts: dict = {}
+    if version_ids:
+        comment_counts = dict(
+            db.query(Comment.version_id, func.count(Comment.id))
+            .filter(Comment.version_id.in_(version_ids), Comment.deleted_at.is_(None))
+            .group_by(Comment.version_id)
+            .all()
+        )
+
     for v in versions:
         vr = AssetVersionResponse.model_validate(v)
         vr.files = [MediaFileResponse.model_validate(f) for f in files_by_version.get(v.id, [])]
+        vr.comment_count = comment_counts.get(v.id, 0)
         result.append(vr)
     return result
 

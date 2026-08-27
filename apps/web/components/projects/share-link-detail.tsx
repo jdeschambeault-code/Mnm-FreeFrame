@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Lock,
   Calendar,
+  Clock,
   Paintbrush,
   LayoutGrid,
   LayoutList,
@@ -868,6 +869,12 @@ export function ShareLinkSettingsPanel({ token }: ShareLinkSettingsPanelProps) {
       <div className="flex-1 overflow-y-auto">
         {rightTab === "settings" ? (
           <div>
+            {/* Created date — informational, not editable */}
+            <div className="flex items-center gap-1.5 px-4 pt-3 pb-1 text-xs text-text-tertiary">
+              <Clock className="h-3 w-3" />
+              Created {new Date(shareLink.created_at).toLocaleString()}
+            </div>
+
             {/* Link Visibility */}
             <Section
               title="Link Visibility"

@@ -2,11 +2,10 @@
 
 import React, { useCallback, useState } from 'react'
 import useSWR from 'swr'
-import { Folder, Film, Music, Image as ImageIcon, Images, MoreHorizontal, Pencil, Trash, Share2, Download } from 'lucide-react'
+import { Folder, Film, Music, Image as ImageIcon, Images, MoreHorizontal, Trash, Share2, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useDownloadStore } from '@/stores/download-store'
-import { NameDialog } from './name-dialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { Folder as FolderType, AssetResponse } from '@/types'
 
@@ -83,7 +82,6 @@ interface FolderCardProps {
   selected?: boolean
   onOpen: (folder: FolderType) => void
   onSelect?: (e: React.MouseEvent) => void
-  onRename?: (folderId: string, name: string) => Promise<void>
   onDelete?: (folderId: string) => Promise<void>
   onShare?: (folderId: string, folderName: string) => Promise<void>
   onDropItems?: (targetFolderId: string, assetIds: string[], folderIds: string[]) => void
@@ -95,7 +93,6 @@ export function FolderCard({
   selected,
   onOpen,
   onSelect,
-  onRename,
   onDelete,
   onShare,
   onDropItems,
@@ -103,7 +100,6 @@ export function FolderCard({
 }: FolderCardProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [renameOpen, setRenameOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const startDownload = useDownloadStore((s) => s.startDownload)
   const menuRef = React.useRef<HTMLDivElement>(null)
@@ -196,16 +192,6 @@ export function FolderCard({
                     onClick={(e) => {
                       e.stopPropagation()
                       setMenuOpen(false)
-                      setRenameOpen(true)
-                    }}
-                  >
-                    <Pencil className="h-3 w-3" /> Rename
-                  </button>
-                  <button
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-hover"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setMenuOpen(false)
                       onShare?.(folder.id, folder.name)
                     }}
                   >
@@ -240,17 +226,6 @@ export function FolderCard({
           </p>
         </div>
       </div>
-
-      {/* Rename dialog */}
-      <NameDialog
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        title="Rename Folder"
-        placeholder="Folder name"
-        defaultValue={folder.name}
-        submitLabel="Rename"
-        onSubmit={(name) => onRename?.(folder.id, name)}
-      />
 
       {/* Delete confirmation */}
       <ConfirmDialog

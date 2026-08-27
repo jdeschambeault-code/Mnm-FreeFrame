@@ -62,6 +62,13 @@ export function AudioPlayer({ asset, version, comments = [], className }: AudioP
   const [muted, setMuted] = React.useState(false)
   const [speed, setSpeed] = React.useState<number>(1)
   const [loop, setLoop] = React.useState(false)
+  // The WaveSurfer 'finish' handler below is registered once per audioUrl
+  // (not re-registered on every loop toggle - that would tear down and
+  // rebuild the whole waveform just to flip a flag), so it must read loop
+  // through a ref rather than closing over the state value directly, or it
+  // would always see the `false` it was created with and never actually loop.
+  const loopRef = React.useRef(loop)
+  React.useEffect(() => { loopRef.current = loop }, [loop])
   const [audioUrl, setAudioUrl] = React.useState<string | null>(null)
 
   // Access share context for share-mode stream fetching
@@ -171,7 +178,7 @@ export function AudioPlayer({ asset, version, comments = [], className }: AudioP
     ws.on('finish', () => {
       setIsPlaying(false)
       setCurrentTime(ws.getDuration())
-      if (loop) {
+      if (loopRef.current) {
         ws.seekTo(0)
         ws.play()
       }

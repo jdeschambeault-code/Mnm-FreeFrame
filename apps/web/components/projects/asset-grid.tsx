@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil } from 'lucide-react'
+import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { useDownloadStore } from '@/stores/download-store'
 import { Button } from '@/components/ui/button'
@@ -47,7 +47,6 @@ interface AssetGridProps {
   folders?: Folder[]
   currentFolderId?: string | null
   onFolderOpen?: (folder: Folder) => void
-  onFolderRename?: (folderId: string, name: string) => Promise<void>
   onFolderDelete?: (folderId: string) => Promise<void>
   onFolderShare?: (folderId: string, folderName: string) => Promise<void>
   onDropToFolder?: (targetFolderId: string, assetIds: string[], folderIds: string[]) => void
@@ -63,7 +62,6 @@ interface AssetGridProps {
   folderTree?: FolderTreeNode[]
   onAssetShare?: (asset: Asset) => void
   onAssetDownload?: (asset: Asset) => void
-  onAssetRename?: (asset: Asset) => void
   onAssetDelete?: (asset: Asset) => void
   /** Actions rendered on the right side of the navigator bar */
   actions?: React.ReactNode
@@ -99,7 +97,6 @@ export function AssetGrid({
   folders,
   currentFolderId,
   onFolderOpen,
-  onFolderRename,
   onFolderDelete,
   onFolderShare,
   onDropToFolder,
@@ -113,7 +110,6 @@ export function AssetGrid({
   folderTree = [],
   onAssetShare,
   onAssetDownload,
-  onAssetRename,
   onAssetDelete,
   actions,
 }: AssetGridProps) {
@@ -299,7 +295,6 @@ export function AssetGrid({
                   <FolderCard
                     folder={folder}
                     onOpen={shareMode ? () => {} : onFolderOpen!}
-                    onRename={shareMode ? undefined : onFolderRename}
                     onDelete={shareMode ? undefined : onFolderDelete}
                     onShare={shareMode ? undefined : onFolderShare}
                     onDropItems={shareMode ? undefined : onDropToFolder}
@@ -358,7 +353,6 @@ export function AssetGrid({
                 thumbnailScale={thumbnailScale}
                 onShare={onAssetShare ? () => onAssetShare(asset) : undefined}
                 onDownload={onAssetDownload ? () => onAssetDownload(asset) : undefined}
-                onRename={onAssetRename ? () => onAssetRename(asset) : undefined}
                 onDelete={onAssetDelete ? () => onAssetDelete(asset) : undefined}
                 onDragStart={(e: React.DragEvent) => {
                   const ids = selectedAssetIds.has(asset.id)
@@ -472,15 +466,6 @@ export function AssetGrid({
                           >
                             <Share2 className="h-3.5 w-3.5 text-text-tertiary" />
                             Share
-                          </DropdownMenu.Item>
-                        )}
-                        {onFolderRename && (
-                          <DropdownMenu.Item
-                            onSelect={() => onFolderRename(folder.id, folder.name)}
-                            className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
-                          >
-                            <Pencil className="h-3.5 w-3.5 text-text-tertiary" />
-                            Rename
                           </DropdownMenu.Item>
                         )}
                         <DropdownMenu.Item
@@ -621,13 +606,6 @@ export function AssetGrid({
                           Copy Asset URL
                         </DropdownMenu.Item>
                         <DropdownMenu.Separator className="my-1 h-px bg-border mx-1" />
-                        <DropdownMenu.Item
-                          onSelect={() => onAssetRename?.(asset)}
-                          className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
-                        >
-                          <Pencil className="h-3.5 w-3.5 text-text-tertiary" />
-                          Rename
-                        </DropdownMenu.Item>
                         <DropdownMenu.Item
                           onSelect={() => onAssetDelete?.(asset)}
                           className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-status-error hover:bg-status-error/10 cursor-pointer outline-none transition-colors"

@@ -242,6 +242,13 @@ export function VideoPlayer({
     registerPauseHandler(pause);
   }, [registerPauseHandler, pause]);
 
+  // Wire the Loop button to the native video element - `loop` toggled the
+  // button's own look but was never applied to playback (video.loop was
+  // never set, and there was no ended-event handler to restart it either).
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.loop = loop;
+  }, [loop, videoRef]);
+
   // Sync video currentTime to review store so comment input shows same timecode
   const lastSyncRef = useRef(0);
   useEffect(() => {

@@ -14,6 +14,7 @@ from ..tasks.celery_app import send_task_safe
 from ..services.s3_service import put_object, generate_presigned_get_url, delete_object
 from ..services.storage import project_storage_used_bytes
 from ..config import settings
+from .users import require_staff_or_admin
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -39,7 +40,7 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> Pr
     return member
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_admin)):
     project = Project(
         name=body.name,
         description=body.description,

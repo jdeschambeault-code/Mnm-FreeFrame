@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, DateTime, JSON, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, JSON, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 try:
@@ -45,5 +45,14 @@ class InstanceSettings(Base):
     # so an encrypted key would become undecryptable on the very next restart.
     ayon_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ayon_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Client Sharing rules (Settings > Admin > Client Sharing) - defaults/locks
+    # applied only to share links created by a non-staff (client) user, see
+    # services/permissions.py.is_staff_user and routers/share.py's
+    # _apply_client_sharing_rules. "Enforced" means the client can neither set
+    # a different value at creation nor change it later via PATCH /share/{token} -
+    # a staff/admin user editing the same link is never restricted by this.
+    client_share_expiry_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default="7")
+    client_share_expiry_enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    client_share_watermark_enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

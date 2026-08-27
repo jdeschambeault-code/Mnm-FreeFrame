@@ -85,3 +85,25 @@ class SetUserProjectAccessRequest(BaseModel):
     (added to any missing, removed from any not listed) - simplest mapping
     for a checkbox-list modal."""
     project_ids: list[uuid.UUID]
+
+
+class AdminShareLinkItem(BaseModel):
+    """One row in Settings -> Admin -> Share Links: every share link across
+    every project, for instance-wide oversight/cancellation - see
+    routers/admin.py list_all_share_links."""
+    id: uuid.UUID
+    token: str
+    title: str
+    share_type: str  # "asset" | "folder" | "project"
+    project_id: uuid.UUID
+    project_name: str
+    created_by_name: str
+    created_by_email: str
+    is_client: bool
+    is_enabled: bool
+    visibility: str
+    permission: str
+    allow_download: bool
+    show_watermark: bool
+    expires_at: str | None = None
+    created_at: str

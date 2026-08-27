@@ -64,6 +64,28 @@ export interface InstanceSettings {
   staff_email_domains: string[];
   workspace_name: string;
   ayon_relay_paused: boolean;
+  client_share_expiry_days: number;
+  client_share_expiry_enforced: boolean;
+  client_share_watermark_enforced: boolean;
+}
+
+export interface AdminShareLinkItem {
+  id: string;
+  token: string;
+  title: string;
+  share_type: "asset" | "folder" | "project";
+  project_id: string;
+  project_name: string;
+  created_by_name: string;
+  created_by_email: string;
+  is_client: boolean;
+  is_enabled: boolean;
+  visibility: string;
+  permission: string;
+  allow_download: boolean;
+  show_watermark: boolean;
+  expires_at: string | null;
+  created_at: string;
 }
 
 export interface EmailStatus {
@@ -216,6 +238,7 @@ export interface AssetVersion {
   created_at: string;
   deleted_at: string | null;
   files?: MediaFile[];
+  comment_count?: number;
 }
 
 /** Backend returns AssetResponse with latest_version embedded */

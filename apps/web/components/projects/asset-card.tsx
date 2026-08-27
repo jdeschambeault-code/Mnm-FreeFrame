@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Film, Music, Image as ImageIcon, Images, MessageSquare, MoreHorizontal, Check, Share2, Download, Link as LinkIcon, Pencil, Trash2 } from 'lucide-react'
+import { Film, Music, Image as ImageIcon, Images, MessageSquare, MoreHorizontal, Check, Share2, Download, Link as LinkIcon, Trash2 } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import type { Asset, AssetType, User } from '@/types'
 import type { AspectRatio, ThumbnailScale, TitleLines } from '@/stores/view-store'
@@ -34,7 +34,6 @@ interface AssetCardProps {
   onDragStart?: (e: React.DragEvent) => void
   onShare?: () => void
   onDownload?: () => void
-  onRename?: () => void
   onDelete?: () => void
   fileSize?: number | null
   // Appearance settings
@@ -72,7 +71,6 @@ export function AssetCard({
   onDragStart,
   onShare,
   onDownload,
-  onRename,
   onDelete,
   fileSize,
   showInfo = true,
@@ -205,13 +203,6 @@ export function AssetCard({
                     Copy Asset URL
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-border mx-1" />
-                  <DropdownMenu.Item
-                    onSelect={onRename}
-                    className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
-                  >
-                    <Pencil className="h-3.5 w-3.5 text-text-tertiary" />
-                    Rename
-                  </DropdownMenu.Item>
                   <DropdownMenu.Item
                     onSelect={onDelete}
                     className="flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-status-error hover:bg-status-error/10 cursor-pointer outline-none transition-colors"

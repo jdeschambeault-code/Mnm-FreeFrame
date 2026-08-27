@@ -37,8 +37,9 @@ from ..schemas.share import (
 )
 from ..services.permissions import (
     require_project_role, validate_share_link, validate_share_link_with_session,
-    validate_asset_in_share, _is_descendant_of,
+    validate_asset_in_share, _is_descendant_of, is_staff_user,
 )
+from ..models.instance_settings import InstanceSettings
 from ..services.redis_service import create_share_session
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from ..services.crypto_service import encrypt_password, decrypt_password
@@ -82,6 +83,67 @@ def _get_project_id_from_link(db: Session, link: ShareLink) -> uuid.UUID:
             raise HTTPException(status_code=404, detail="Shared folder not found")
         return folder.project_id
     raise HTTPException(status_code=400, detail="Invalid share link")
+
+
+def _require_can_edit_share_link(db: Session, link: ShareLink, current_user: User) -> None:
+    """A share link's own creator can always edit its settings (needed right after
+    creation, when a client-role member applies the Configure step's choices via
+    PATCH) - editing someone ELSE's link still needs editor+ on the project.
+    Revoking (DELETE) is intentionally NOT covered by this - stays editor+ only,
+    so cancelling a client's link is a staff/admin (Settings > Admin > Share Links)
+    action, not something the client can do to themselves."""
+    if current_user.id == link.created_by:
+        return
+    project_id = _get_project_id_from_link(db, link)
+    require_project_role(db, project_id, current_user, ProjectRole.editor)
+
+
+# ── Client Sharing rules (Settings > Admin > Client Sharing) ────────────────────
+# Defaults/locks applied only to share links a non-staff (client) user creates or
+# edits - see services/permissions.py.is_staff_user. A staff/admin user is never
+# affected by these, whether they're creating their own link or editing a
+# client's (see _require_can_edit_share_link above).
+
+def _is_client(db: Session, user: User) -> bool:
+    return not (user.is_superadmin or is_staff_user(db, user))
+
+
+def _client_sharing_rules(db: Session) -> tuple[int, bool, bool]:
+    """(expiry_days, expiry_enforced, watermark_enforced) - falls back to the
+    instance_settings columns' own defaults when the singleton row doesn't exist yet."""
+    row = db.query(InstanceSettings).first()
+    if not row:
+        return 7, True, True
+    return row.client_share_expiry_days, row.client_share_expiry_enforced, row.client_share_watermark_enforced
+
+
+def _apply_client_sharing_rules(
+    db: Session, current_user: User, expires_at: Optional[datetime], show_watermark: bool,
+) -> tuple[Optional[datetime], bool]:
+    """Force default+enforced Client Sharing values onto a link a client is
+    CREATING, overriding whatever the client's own request asked for."""
+    if not _is_client(db, current_user):
+        return expires_at, show_watermark
+    days, expiry_enforced, watermark_enforced = _client_sharing_rules(db)
+    if expiry_enforced:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+    if watermark_enforced:
+        show_watermark = True
+    return expires_at, show_watermark
+
+
+def _strip_client_sharing_locks(db: Session, current_user: User, updates: dict) -> dict:
+    """Drop a client's attempt to change a Client-Sharing-enforced attribute via
+    PATCH /share/{token} on their OWN link (editing someone else's link already
+    needs editor+, which always bypasses these rules)."""
+    if not _is_client(db, current_user):
+        return updates
+    _, expiry_enforced, watermark_enforced = _client_sharing_rules(db)
+    if expiry_enforced:
+        updates.pop("expires_at", None)
+    if watermark_enforced:
+        updates.pop("show_watermark", None)
+    return updates
 
 
 def _log_share_activity(
@@ -168,7 +230,7 @@ def create_share_link(
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset(db, asset_id)
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
 
     token = secrets.token_urlsafe(32)
     if body.password:
@@ -180,19 +242,21 @@ def create_share_link(
         password_hash = None
         password_encrypted = None
 
+    expires_at, show_watermark = _apply_client_sharing_rules(db, current_user, body.expires_at, body.show_watermark)
+
     link = ShareLink(
         asset_id=asset_id,
         token=token,
         created_by=current_user.id,
         title=body.title if body.title else asset.name,
         description=body.description,
-        expires_at=body.expires_at,
+        expires_at=expires_at,
         password_hash=password_hash,
         password_encrypted=password_encrypted,
         permission=body.permission,
         allow_download=body.allow_download,
         show_versions=body.show_versions,
-        show_watermark=body.show_watermark,
+        show_watermark=show_watermark,
         appearance=body.appearance.model_dump(),
     )
     db.add(link)
@@ -389,10 +453,10 @@ def update_share_link(
     link = db.query(ShareLink).filter(ShareLink.token == token, ShareLink.deleted_at.is_(None)).first()
     if not link:
         raise HTTPException(status_code=404, detail="Share link not found")
-    project_id = _get_project_id_from_link(db, link)
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    _require_can_edit_share_link(db, link, current_user)
 
     updates = body.model_dump(exclude_unset=True)
+    updates = _strip_client_sharing_locks(db, current_user, updates)
 
     # Handle password separately — hash + encrypt for reversible admin display
     if "password" in updates:
@@ -443,7 +507,7 @@ def create_folder_share_link(
     current_user: User = Depends(get_current_user),
 ):
     folder = _get_folder(db, folder_id)
-    require_project_role(db, folder.project_id, current_user, ProjectRole.editor)
+    require_project_role(db, folder.project_id, current_user, ProjectRole.reviewer)
 
     token = secrets.token_urlsafe(32)
     if body.password:
@@ -455,19 +519,21 @@ def create_folder_share_link(
         password_hash = None
         password_encrypted = None
 
+    expires_at, show_watermark = _apply_client_sharing_rules(db, current_user, body.expires_at, body.show_watermark)
+
     link = ShareLink(
         folder_id=folder_id,
         token=token,
         created_by=current_user.id,
         title=body.title if body.title else folder.name,
         description=body.description,
-        expires_at=body.expires_at,
+        expires_at=expires_at,
         password_hash=password_hash,
         password_encrypted=password_encrypted,
         permission=body.permission,
         allow_download=body.allow_download,
         show_versions=body.show_versions,
-        show_watermark=body.show_watermark,
+        show_watermark=show_watermark,
         appearance=body.appearance.model_dump(),
     )
     db.add(link)
@@ -487,7 +553,7 @@ def create_project_share_link(
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_project_role(db, project_id, current_user, ProjectRole.reviewer)
 
     token = secrets.token_urlsafe(32)
     if body.password:
@@ -499,19 +565,21 @@ def create_project_share_link(
         password_hash = None
         password_encrypted = None
 
+    expires_at, show_watermark = _apply_client_sharing_rules(db, current_user, body.expires_at, body.show_watermark)
+
     link = ShareLink(
         project_id=project_id,
         token=token,
         created_by=current_user.id,
         title=body.title if body.title else project.name,
         description=body.description,
-        expires_at=body.expires_at,
+        expires_at=expires_at,
         password_hash=password_hash,
         password_encrypted=password_encrypted,
         permission=body.permission,
         allow_download=body.allow_download,
         show_versions=body.show_versions,
-        show_watermark=body.show_watermark,
+        show_watermark=show_watermark,
         appearance=body.appearance.model_dump(),
     )
     db.add(link)
@@ -1075,7 +1143,7 @@ def create_multi_share_link(
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_project_role(db, project_id, current_user, ProjectRole.reviewer)
 
     if not body.asset_ids and not body.folder_ids:
         raise HTTPException(status_code=400, detail="At least one asset or folder is required")
@@ -1109,6 +1177,8 @@ def create_multi_share_link(
         except Exception:
             pass
 
+    expires_at, show_watermark = _apply_client_sharing_rules(db, current_user, body.expires_at, body.show_watermark)
+
     link = ShareLink(
         project_id=project_id,
         token=token,
@@ -1119,10 +1189,10 @@ def create_multi_share_link(
         visibility=body.visibility,
         allow_download=body.allow_download,
         show_versions=body.show_versions,
-        show_watermark=body.show_watermark,
+        show_watermark=show_watermark,
         password_hash=password_hash,
         password_encrypted=password_encrypted,
-        expires_at=body.expires_at,
+        expires_at=expires_at,
         appearance=body.appearance.model_dump(),
         created_by=current_user.id,
     )
