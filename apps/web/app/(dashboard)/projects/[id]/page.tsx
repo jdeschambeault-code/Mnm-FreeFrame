@@ -122,7 +122,6 @@ export default function ProjectDetailPage() {
     assetIds: string[];
     folderIds: string[];
   } | null>(null);
-  const [assetToRename, setAssetToRename] = React.useState<AssetResponse | null>(null);
   const [assetToDelete, setAssetToDelete] = React.useState<AssetResponse | null>(null);
 
   const { files: uploadFiles, startUpload } = useUploadStore();
@@ -132,7 +131,6 @@ export default function ProjectDetailPage() {
     tree,
     mutateTree,
     createFolder,
-    renameFolder,
     moveFolder,
     deleteFolder,
     moveAsset,
@@ -424,10 +422,6 @@ export default function ProjectDetailPage() {
             onCreateFolder={async (_name, parentId) => {
               setFolderDialogParentId(parentId);
               setFolderDialogOpen(true);
-            }}
-            onRenameFolder={async (id, name) => {
-              await renameFolder(id, name);
-              mutateSubfolders();
             }}
             onDeleteFolder={async (id) => {
               await deleteFolder(id);
@@ -725,10 +719,6 @@ export default function ProjectDetailPage() {
                 router.push(`/projects/${projectId}/assets/${asset.id}${qs}`);
               }}
               onFolderOpen={(folder) => handleSelectFolder(folder.id)}
-              onFolderRename={async (id, name) => {
-                await renameFolder(id, name);
-                mutateSubfolders();
-              }}
               onFolderDelete={async (id) => {
                 await deleteFolder(id);
                 mutateAssets();
@@ -774,7 +764,6 @@ export default function ProjectDetailPage() {
                   }
                 } catch {}
               }}
-              onAssetRename={(asset) => setAssetToRename(asset as AssetResponse)}
               onAssetDelete={(asset) => setAssetToDelete(asset as AssetResponse)}
               onBulkMove={async (assetIds, folderIds, targetFolderId) => {
                 await bulkMove(assetIds, folderIds, targetFolderId);
@@ -1235,24 +1224,6 @@ export default function ProjectDetailPage() {
           mutateSubfolders();
           mutateTree();
           setPendingBulkDelete(null);
-        }}
-      />
-
-      {/* Rename asset dialog */}
-      <NameDialog
-        open={assetToRename !== null}
-        onOpenChange={(open) => { if (!open) setAssetToRename(null); }}
-        title="Rename asset"
-        defaultValue={assetToRename?.name ?? ""}
-        placeholder="Asset name..."
-        submitLabel="Rename"
-        onSubmit={async (name) => {
-          if (!assetToRename) return;
-          try {
-            await api.patch(`/assets/${assetToRename.id}`, { name });
-            mutateAssets();
-          } catch {}
-          setAssetToRename(null);
         }}
       />
 

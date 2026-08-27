@@ -26,7 +26,7 @@ import { ProjectCard } from "@/components/projects/project-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
-import type { Project, ProjectType, AyonProjectSummary } from "@/types";
+import type { Project, ProjectType, AyonProjectSummary, InstanceSettings } from "@/types";
 
 type NewProjectStep = "choice" | "create" | "ayon";
 
@@ -293,6 +293,23 @@ export default function ProjectsPage() {
   usePageTitle("Projects");
   const router = useRouter();
   const { user } = useAuthStore();
+
+  // Client accounts (email domain not on the staff allowlist) can be added to
+  // projects and upload assets there, but shouldn't see project-creation UI -
+  // creating projects/linking Ayon projects is a staff/admin capability (see
+  // require_staff_or_admin, now also enforced on POST /projects itself).
+  const { data: instanceSettings } = useSWR<InstanceSettings>(
+    "/instance/settings",
+    () => api.get<InstanceSettings>("/instance/settings"),
+  );
+  const canCreateProjects = !!(
+    user?.is_superadmin ||
+    (user?.email &&
+      (instanceSettings?.staff_email_domains ?? []).includes(
+        user.email.split("@")[1]?.toLowerCase() ?? "",
+      ))
+  );
+
   const [viewMode, setViewMode] = React.useState<ViewMode>("grid");
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [dialogStep, setDialogStep] = React.useState<NewProjectStep>("choice");
@@ -402,7 +419,7 @@ export default function ProjectsPage() {
             </button>
           </div>
 
-          <Dialog.Root
+          {canCreateProjects && <Dialog.Root
             open={dialogOpen}
             onOpenChange={(open) => {
               setDialogOpen(open);
@@ -550,7 +567,7 @@ export default function ProjectsPage() {
                 )}
               </Dialog.Content>
             </Dialog.Portal>
-          </Dialog.Root>
+          </Dialog.Root>}
         </div>
       </div>
 
@@ -574,11 +591,16 @@ export default function ProjectsPage() {
           <EmptyState
             icon={FolderOpen}
             title="No projects yet"
-            description="Create your first project to start organizing assets."
-            action={{
-              label: "New Project",
-              onClick: () => setDialogOpen(true),
-            }}
+            description={
+              canCreateProjects
+                ? "Create your first project to start organizing assets."
+                : "You haven't been added to any projects yet."
+            }
+            action={
+              canCreateProjects
+                ? { label: "New Project", onClick: () => setDialogOpen(true) }
+                : undefined
+            }
           />
         </div>
       ) : (
@@ -590,7 +612,7 @@ export default function ProjectsPage() {
             viewMode={viewMode}
             emptyMessage="You haven't created any projects yet."
             onNewProject={() => setDialogOpen(true)}
-            showNewButton
+            showNewButton={canCreateProjects}
             userId={user?.id}
             onMutate={() => mutate()}
           />

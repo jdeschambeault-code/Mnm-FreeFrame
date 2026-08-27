@@ -17,6 +17,8 @@ import { InstanceSettingsTab } from "@/components/settings/instance-settings-tab
 import { EmailSettingsTab } from "@/components/settings/email-settings-tab";
 import { AyonProjectsTab } from "@/components/settings/ayon-projects-tab";
 import { UserProjectAccessModal } from "@/components/settings/user-project-access-modal";
+import { ClientSharingTab } from "@/components/settings/client-sharing-tab";
+import { AdminShareLinksTab } from "@/components/settings/admin-share-links-tab";
 
 function BulkInviteDialog() {
   const [open, setOpen] = React.useState(false);
@@ -335,7 +337,7 @@ function userStatusBadge(status: UserStatus) {
 export default function AdminPage() {
   const { user, isSuperAdmin } = useAuthStore();
   const router = useRouter();
-  const [tab, setTab] = React.useState<"users" | "instance" | "ayon" | "email">("users");
+  const [tab, setTab] = React.useState<"users" | "instance" | "ayon" | "email" | "share-links" | "client-sharing">("users");
 
   const { data: usersResp, isLoading: loadingUsers } = useSWR<User[]>(
     isSuperAdmin ? "/admin/users" : null,
@@ -441,7 +443,7 @@ export default function AdminPage() {
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-border">
-        {([["users", "Users"], ["instance", "Instance settings"], ["ayon", "Ayon Projects"], ["email", "Email"]] as const).map(([key, label]) => (
+        {([["users", "Users"], ["instance", "Instance settings"], ["ayon", "Ayon Projects"], ["email", "Email"], ["share-links", "Share Links"], ["client-sharing", "Client Sharing"]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -460,6 +462,8 @@ export default function AdminPage() {
       {tab === "instance" && <InstanceSettingsTab />}
       {tab === "ayon" && <AyonProjectsTab />}
       {tab === "email" && <EmailSettingsTab />}
+      {tab === "share-links" && <AdminShareLinksTab />}
+      {tab === "client-sharing" && <ClientSharingTab />}
 
       {/* User management */}
       {tab === "users" && (
