@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from .config import settings
 
 # This is a self-hosted, LAN-only deployment - admin/user emails intentionally
-# use .local-style addresses (e.g. admin@mnm.local) that never need to be
+# use .local-style addresses (e.g. admin@madness.local) that never need to be
 # globally routable. email_validator (the EmailStr backend used in
 # schemas/auth.py and routers/setup.py) rejects "local" as a reserved-use TLD
 # by default (RFC 6762); patch its shared domain list once, here, rather than

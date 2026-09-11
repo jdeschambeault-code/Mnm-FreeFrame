@@ -20,7 +20,7 @@ def is_staff_user(db: Session, user: User) -> bool:
     """Whether user's email domain is on the admin-configured staff allowlist."""
     domain = user.email.rsplit("@", 1)[-1].lower()
     row = db.query(InstanceSettings).first()
-    staff_domains = (row.staff_email_domains if row else None) or ["mnm.local", "methodnmadness.com"]
+    staff_domains = (row.staff_email_domains if row else None) or ["madness.com", "methodnmadness.com"]
     return domain in {d.lower() for d in staff_domains}
 
 

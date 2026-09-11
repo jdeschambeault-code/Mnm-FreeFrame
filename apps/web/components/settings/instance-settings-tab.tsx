@@ -83,7 +83,7 @@ export function InstanceSettingsTab() {
           type="text"
           value={staffDomains}
           onChange={(e) => setStaffDomains(e.target.value)}
-          placeholder="mnm.local, methodnmadness.com"
+          placeholder="madness.com, methodnmadness.com"
         />
         <p className="text-xs text-text-tertiary">
           Comma-separated. Users logging in with any other email domain are treated as client

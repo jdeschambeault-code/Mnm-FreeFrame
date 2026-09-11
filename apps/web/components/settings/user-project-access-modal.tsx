@@ -78,7 +78,7 @@ export function UserProjectAccessModal({
             Project access — {userName}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-text-secondary">
-            Pick which projects this account can see. Staff accounts (mnm.local /
+            Pick which projects this account can see. Staff accounts (madness.com /
             methodnmadness.com) already see every project by default and manage
             exceptions themselves from Settings → My Ayon Projects — this only matters
             for everyone else.

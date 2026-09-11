@@ -60,7 +60,7 @@ def get_instance_settings(
     row = db.query(InstanceSettings).first()
     return InstanceSettingsResponse(
         storage_limit_bytes=row.storage_limit_bytes if row else 0,
-        staff_email_domains=(row.staff_email_domains or []) if row else ["mnm.local", "methodnmadness.com"],
+        staff_email_domains=(row.staff_email_domains or []) if row else ["madness.com", "methodnmadness.com"],
         workspace_name=(row.workspace_name or "FreeFrame") if row else "FreeFrame",
         ayon_relay_paused=row.ayon_relay_paused if row else False,
         client_share_expiry_days=row.client_share_expiry_days if row else 7,

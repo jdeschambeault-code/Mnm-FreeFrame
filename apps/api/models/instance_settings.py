@@ -23,7 +23,7 @@ class InstanceSettings(Base):
     # is_staff_user). Anyone logging in with any other domain is a client
     # account - reserved for future CLIENT_SHARE-only asset filtering.
     staff_email_domains: Mapped[list] = mapped_column(
-        JSON, nullable=False, server_default='["mnm.local", "methodnmadness.com"]'
+        JSON, nullable=False, server_default='["madness.com", "methodnmadness.com"]'
     )
     # Shown in the sidebar (Settings > Branding > Workspace name) and
     # available server-side as the {{site_name}} email template variable -

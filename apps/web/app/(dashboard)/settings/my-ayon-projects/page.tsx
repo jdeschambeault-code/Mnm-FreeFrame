@@ -44,7 +44,7 @@ export default function MyAyonProjectsPage() {
           <EmptyState
             icon={FolderKanban}
             title="Not applicable to this account"
-            description="Only staff accounts (mnm.local / methodnmadness.com) see every project by default, so there's nothing to hide here. Ask an admin if you need access to a specific project."
+            description="Only staff accounts (madness.com / methodnmadness.com) see every project by default, so there's nothing to hide here. Ask an admin if you need access to a specific project."
           />
         </div>
       ) : isLoading ? (

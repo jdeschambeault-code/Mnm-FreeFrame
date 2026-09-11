@@ -829,7 +829,7 @@ export function CommentPanel({
   const currentAsset = useReviewStore((s) => s.currentAsset);
   const currentVersion = useReviewStore((s) => s.currentVersion);
 
-  // Staff (mnm.local/methodnmadness.com-domain) users get the "Share to
+  // Staff (madness.com/methodnmadness.com-domain) users get the "Share to
   // Ayon" menu item on every comment, not just their own - see CommentMenu.
   // Same SWR key the sidebar already keeps warm for workspace_name/relay
   // status, so this is a cache hit in practice, not a new request.
