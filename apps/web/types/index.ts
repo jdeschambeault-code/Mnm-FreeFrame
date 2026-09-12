@@ -605,6 +605,7 @@ export interface PaginatedResponse<T> {
 
 export interface SetupStatus {
   needs_setup: boolean;
+  google_login_enabled?: boolean;
 }
 
 export interface MagicCodeResponse {

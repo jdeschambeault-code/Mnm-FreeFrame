@@ -138,6 +138,35 @@ def check_rate_limit(
         return True, 0
 
 
+# ── Google OAuth CSRF state ────────────────────────────────────────────────────
+# Authlib/Starlette's usual approach binds this to a server-side session
+# cookie; this app is otherwise entirely stateless-JWT, so it's simpler and
+# more consistent to store the one-time state token in Redis instead of
+# introducing a session/cookie mechanism just for this.
+
+GOOGLE_OAUTH_STATE_PREFIX = "google_oauth_state:"
+GOOGLE_OAUTH_STATE_EXPIRY_SECONDS = 600  # 10 minutes - matches the OAuth redirect round-trip window
+
+
+def store_oauth_state(state: str) -> None:
+    """Record a freshly-issued Google OAuth state token, one-time use."""
+    r = get_redis()
+    r.setex(f"{GOOGLE_OAUTH_STATE_PREFIX}{state}", GOOGLE_OAUTH_STATE_EXPIRY_SECONDS, "1")
+
+
+def consume_oauth_state(state: str) -> bool:
+    """True iff `state` was issued and not already used; deletes it either way.
+
+    Plain GET + DELETE (not GETDEL) - the bundled Windows Redis build here is
+    5.0.14.1 and GETDEL only exists from Redis 6.2 onward.
+    """
+    r = get_redis()
+    key = f"{GOOGLE_OAUTH_STATE_PREFIX}{state}"
+    found = r.get(key) is not None
+    r.delete(key)
+    return found
+
+
 # ── Share link password sessions ──────────────────────────────────────────────
 
 SHARE_SESSION_PREFIX = "share_session:"

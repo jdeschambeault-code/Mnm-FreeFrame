@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
+from ..config import settings
 from ..database import get_db
 from ..models.user import User, UserStatus
 from ..services.auth_service import hash_password, create_access_token, create_refresh_token
@@ -18,6 +19,11 @@ router = APIRouter(prefix="/setup", tags=["setup"])
 class SetupStatusResponse(BaseModel):
     needs_setup: bool
     message: str
+    # Lets the (unauthenticated) login page decide whether to show the
+    # "Continue with Google" button - already the one public, no-auth
+    # endpoint the login page fetches on every load, so no new endpoint
+    # needed just for this.
+    google_login_enabled: bool = False
 
 
 class CreateSuperAdminRequest(BaseModel):
@@ -47,14 +53,19 @@ def get_setup_status(db: Session = Depends(get_db)):
     Check if the system needs initial setup.
     Returns needs_setup=True if no superadmin exists.
     """
+    google_login_enabled = bool(
+        settings.google_client_id and settings.google_client_secret and settings.google_oauth_redirect_uri
+    )
     if _has_superadmin(db):
         return SetupStatusResponse(
             needs_setup=False,
             message="System is already configured",
+            google_login_enabled=google_login_enabled,
         )
     return SetupStatusResponse(
         needs_setup=True,
         message="No superadmin found. Please complete initial setup.",
+        google_login_enabled=google_login_enabled,
     )
 
 

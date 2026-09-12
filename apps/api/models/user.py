@@ -23,6 +23,12 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Set on first "Sign in with Google" for this account - find-or-create by
+    # email in routers/auth.py's /auth/google/callback. NULL for every other
+    # login method (magic-code, password, invite); password_hash can coexist
+    # (a Google-provisioned account can still set a password later via the
+    # normal set-password flow).
+    google_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.active)
     is_superadmin: Mapped[bool] = mapped_column(default=False)
     email_verified: Mapped[bool] = mapped_column(default=False)

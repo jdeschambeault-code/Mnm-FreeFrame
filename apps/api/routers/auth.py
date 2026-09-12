@@ -1,8 +1,14 @@
+from urllib.parse import urlencode
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_auth_requests
 from sqlalchemy.orm import Session
 import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
+from ..config import settings
 from ..database import get_db
 from ..schemas.auth import (
     LoginRequest, TokenResponse,
@@ -19,7 +25,7 @@ from ..services.auth_service import (
 )
 from ..services.redis_service import (
     generate_magic_code, store_magic_code, verify_magic_code as redis_verify_magic_code,
-    MAGIC_CODE_EXPIRY_SECONDS,
+    MAGIC_CODE_EXPIRY_SECONDS, store_oauth_state, consume_oauth_state,
 )
 from ..tasks.email_tasks import send_magic_code_email, send_invite_email
 from ..tasks.celery_app import send_task_safe
@@ -28,6 +34,9 @@ from ..middleware.auth import get_current_user
 from ..middleware.rate_limit import rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 MAGIC_CODE_EXPIRY_MINUTES = MAGIC_CODE_EXPIRY_SECONDS // 60
 
@@ -236,6 +245,113 @@ def update_preferences(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+def _require_google_configured() -> None:
+    if not (settings.google_client_id and settings.google_client_secret and settings.google_oauth_redirect_uri):
+        raise HTTPException(status_code=400, detail="Google login is not configured")
+
+
+@router.get("/google/login")
+def google_login():
+    """Redirect to Google's consent screen. state is one-time, stored in
+    Redis (see services/redis_service.py) rather than a session cookie -
+    this app is otherwise entirely stateless-JWT."""
+    _require_google_configured()
+    state = secrets.token_urlsafe(32)
+    store_oauth_state(state)
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": settings.google_oauth_redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return RedirectResponse(f"{GOOGLE_AUTHORIZATION_URL}?{urlencode(params)}")
+
+
+@router.get("/google/callback")
+async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
+    """Exchange the authorization code, verify the id_token's signature against
+    Google's own rotating public keys (google-auth handles JWKS fetch/cache/
+    rotation + audience/issuer checks), find-or-create the User by email, then
+    hand back the same TokenResponse shape every other login path issues -
+    see services/auth_service.py's create_access_token/create_refresh_token.
+    Tokens travel back to the frontend in the URL *fragment* (not a query
+    string), so they're never sent to any server or logged - only readable
+    client-side by the callback page's own JS.
+    """
+    _require_google_configured()
+    if not consume_oauth_state(state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.google_oauth_redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google sign-in failed")
+    id_token_str = token_resp.json().get("id_token")
+    if not id_token_str:
+        raise HTTPException(status_code=401, detail="Google sign-in failed")
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            id_token_str, google_auth_requests.Request(), settings.google_client_id,
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    email = claims.get("email")
+    if not email or not claims.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account has no verified email")
+    google_id = claims["sub"]
+
+    user = db.query(User).filter(User.google_id == google_id, User.deleted_at.is_(None)).first()
+    if not user:
+        # Not yet linked by google_id - fall back to matching by email so an
+        # existing magic-code/password account gets linked instead of a
+        # duplicate created (matches this email's account either way).
+        user = get_user_by_email(db, email)
+        if user:
+            user.google_id = google_id
+        else:
+            user = User(
+                email=email,
+                name=claims.get("name") or email,
+                avatar_url=claims.get("picture"),
+                google_id=google_id,
+                status=UserStatus.active,
+                email_verified=True,
+            )
+            db.add(user)
+
+    if user.status == UserStatus.deactivated:
+        raise HTTPException(status_code=401, detail="This account has been deactivated")
+    if user.status == UserStatus.pending_verification:
+        user.status = UserStatus.active
+    user.email_verified = True
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+
+    # No needs_password gate here (unlike the magic-code/password flows): a
+    # Google-authenticated account doesn't need a local password to sign in
+    # again - it can always just use Google. Setting one is optional, done
+    # later via Settings if they want a password-based fallback too.
+    fragment = urlencode({
+        "access_token": create_access_token(str(user.id), token_version=user.token_version),
+        "refresh_token": create_refresh_token(str(user.id), token_version=user.token_version),
+    })
+    return RedirectResponse(f"{settings.frontend_url}/auth/google/callback#{fragment}")
+
 
 @router.patch("/change-password", response_model=TokenResponse, status_code=status.HTTP_200_OK)
 def change_password(

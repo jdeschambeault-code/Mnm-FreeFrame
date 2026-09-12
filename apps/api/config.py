@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     ayon_url: str | None = None
     ayon_api_key: str | None = None
 
+    # Google OAuth ("Sign in with Google") - not required; the /auth/google/*
+    # routes just 400 if unset. redirect_uri must exactly match one of the
+    # "Authorized redirect URIs" registered for this client in Google Cloud
+    # Console - Google rejects any mismatch outright.
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_oauth_redirect_uri: str | None = None
+
     @model_validator(mode="after")
     def _check_s3_endpoint_consistency(self):
         """Fail loud on `S3_STORAGE=s3` + a real custom (non-AWS) `S3_ENDPOINT`.

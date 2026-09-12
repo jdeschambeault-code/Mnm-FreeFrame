@@ -32,3 +32,10 @@ kombu==5.6.2
 # services/ayon_service.py - handles GraphQL/REST fallback, pagination, and
 # entity shapes correctly instead of hand-rolling raw REST calls.
 ayon-python-api==1.2.16
+# "Sign in with Google" (routers/auth.py's /auth/google/*): verifies the
+# returned id_token's signature against Google's rotating public keys
+# (JWKS fetch/cache/rotation/audience/issuer checks all handled), rather
+# than hand-rolling that. The authorization redirect and code exchange
+# themselves just use the existing httpx dependency - no client library
+# needed for those.
+google-auth==2.42.0

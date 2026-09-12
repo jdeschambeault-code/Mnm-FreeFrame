@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-const PUBLIC_ROUTES = ['/login', '/setup']
+// /auth/google/callback must stay public: the tokens it receives arrive in
+// the URL fragment (never sent to any server, including this middleware),
+// so the ff_access_token/ff_refresh_token cookies this middleware checks for
+// don't exist yet on the very first request - only after that page's own
+// client-side JS runs setTokens(). Gating it here would bounce every Google
+// sign-in straight back to /login before it ever got the chance.
+const PUBLIC_ROUTES = ['/login', '/setup', '/auth/google/callback']
 const PUBLIC_PREFIXES = ['/invite/', '/share/']
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'

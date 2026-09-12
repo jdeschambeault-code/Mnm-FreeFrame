@@ -8,13 +8,21 @@ import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import type { VerifyCodeResponse, AuthTokens } from '@/types'
+import type { VerifyCodeResponse, AuthTokens, SetupStatus } from '@/types'
 
 type Step = 'email' | 'code' | 'password' | 'classic'
 
 export function LoginForm() {
   const router = useRouter()
   const [step, setStep] = useState<Step>('classic')
+  const [googleEnabled, setGoogleEnabled] = useState(false)
+
+  useEffect(() => {
+    api.get<SetupStatus>('/setup/status').then(
+      (status) => setGoogleEnabled(!!status.google_login_enabled),
+      () => {} // status unreachable - just hide the button, rest of the form still works
+    )
+  }, [])
   const [email, setEmail] = useState('')
   const [emailError, setEmailError] = useState('')
   const [code, setCode] = useState(['', '', '', '', '', ''])
@@ -279,6 +287,29 @@ export function LoginForm() {
             Sign in
           </Button>
         </form>
+
+        {googleEnabled && (
+          <>
+            <div className="my-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs text-text-tertiary">OR</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <a
+              href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/google/login`}
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-surface-secondary px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-surface-tertiary"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.47a5.54 5.54 0 0 1-2.4 3.63v3h3.88c2.27-2.09 3.57-5.17 3.57-8.82Z" />
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.94-2.91l-3.88-3c-1.08.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.73-4.96H1.26v3.11A12 12 0 0 0 12 24Z" />
+                <path fill="#FBBC05" d="M5.27 14.28a7.2 7.2 0 0 1 0-4.56V6.61H1.26a12 12 0 0 0 0 10.78l4.01-3.11Z" />
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.94 1.19 15.24 0 12 0A12 12 0 0 0 1.26 6.61l4.01 3.11C6.22 6.86 8.87 4.75 12 4.75Z" />
+              </svg>
+              Continue with Google
+            </a>
+          </>
+        )}
 
         <div className="mt-6 text-center">
           <button
